@@ -1,0 +1,175 @@
+# ============================================================================
+# Databricks Asset Bundles - 통합 메타데이터 기반 파이프라인
+# ============================================================================
+# 이 DABs 설정은 unified_pipeline_metadata.yml을 기반으로
+# 자동 생성된 리소스를 포함합니다.
+#
+# 사용법:
+#   1. 메타데이터 처리:
+#      python scripts/unified_metadata_processor.py \
+#        --metadata-file metadata/unified_pipeline_metadata.yml \
+#        --output-dir generated/ \
+#        --environment dev
+#
+#   2. 배포:
+#      databricks bundle deploy --target dev
+#
+#   3. 실행:
+#      databricks bundle run orchestrator_item_goods_option_full --target dev
+# ============================================================================
+
+bundle:
+  name: gmarket_meta_pipeline
+  
+include:
+  # 자동 생성된 개별 dataflow DABs 포함
+  - generated/dabs_*.yml
+
+variables:
+  # Unity Catalog
+  catalog_name:
+    description: "Unity Catalog name"
+    default: "baikald1ws"
+  
+  # Secrets
+  db_secrets_scope:
+    description: "Databricks secrets scope for DB credentials"
+    default: "pipeline-cred-baikalx"
+  
+  # SQL Warehouse (Serverless)
+  use_serverless_warehouse:
+    description: "Use Serverless SQL Warehouse for metadata operations"
+    default: true
+  
+  # Environment
+  environment:
+    description: "Deployment environment"
+    default: "dev"
+
+targets:
+  dev:
+    mode: development
+    default: true
+    variables:
+      catalog_name: "baikald1ws"
+      environment: "dev"
+    workspace:
+      host: "https://e2-demo-field-eng.cloud.databricks.com/"
+  
+  prod:
+    mode: production
+    variables:
+      catalog_name: "baikald1ws"
+      environment: "prod"
+    workspace:
+      host: "https://e2-demo-field-eng.cloud.databricks.com/"
+    
+    # Production 배포 시 승인 필요
+    run_as:
+      service_principal_name: "dlt-meta-prod-sp"
+
+# 공통 리소스
+resources:
+  jobs:
+    # 메타데이터 초기화 Job
+    setup_metadata:
+      name: "setup_metadata_tables"
+      tasks:
+        - task_key: create_metadata_schemas
+          sql_task:
+            file:
+              path: ./generated/metadata_ddl_item_goods_option.sql
+            warehouse:
+              # Serverless SQL Warehouse 사용
+              serverless: true
+      
+      max_concurrent_runs: 1
+      tags:
+        project: "dlt-meta-unified"
+        stage: "setup"
+    
+    # 전체 파이프라인 Orchestrator
+    orchestrator_full_pipeline:
+      name: "orchestrator_item_goods_option_full"
+      tasks:
+        # Task 1: RDB Ingestion
+        - task_key: rdb_ingestion
+          job_cluster_key: "ingestion_cluster"
+          notebook_task:
+            notebook_path: ./notebooks/rdb_ingestion_runner
+            base_parameters:
+              config_file: "generated/rdb_ingestion_item_goods_option.json"
+              environment: "${var.environment}"
+          libraries:
+            - maven:
+                coordinates: "com.microsoft.sqlserver:mssql-jdbc:12.4.0.jre11"
+        
+        # Task 2: DLT Bronze/Silver Pipeline
+        - task_key: dlt_bronze_silver
+          depends_on:
+            - task_key: rdb_ingestion
+              outcome: "success"
+          pipeline_task:
+            pipeline_id: "${resources.pipelines.dlt_item_goods_option.id}"
+            full_refresh: false
+        
+        # Task 3: Data Quality Validation (Optional)
+        - task_key: validate_data_quality
+          depends_on:
+            - task_key: dlt_bronze_silver
+              outcome: "success"
+          job_cluster_key: "validation_cluster"
+          notebook_task:
+            notebook_path: ./notebooks/data_quality_validator
+            base_parameters:
+              dataflow_id: "item_goods_option"
+              catalog: "${var.catalog_name}"
+      
+      job_clusters:
+        - job_cluster_key: "ingestion_cluster"
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 2
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.databricks.delta.autoCompact.enabled: "true"
+        
+        - job_cluster_key: "validation_cluster"
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 1
+      
+      # 스케줄 (환경별로 다르게 설정 가능)
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"  # 매일 새벽 2시
+        timezone_id: "Asia/Seoul"
+        pause_status: "${var.environment == 'dev' ? 'PAUSED' : 'UNPAUSED'}"
+      
+      max_concurrent_runs: 1
+      
+      email_notifications:
+        on_failure:
+          - "lina.ryoo@databricks.com"
+      
+      tags:
+        project: "dlt-meta-unified"
+        dataflow_id: "item_goods_option"
+        environment: "${var.environment}"
+
+  # DLT Pipeline 리소스는 generated/dabs_*.yml에서 자동 생성됨
+  # (위의 include 섹션 참조)
+
+workspace:
+  root_path: "/Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}"
+  
+  # 필요한 디렉토리 자동 생성
+  file_path: ./
+
+permissions:
+  - level: CAN_MANAGE
+    group_name: "data_platform_engineers"
+  
+  - level: CAN_RUN
+    service_principal_name: "123456-abcdef"

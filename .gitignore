@@ -1,0 +1,18 @@
+# Generated files (자동 생성된 파일들은 Git에서 제외)
+generated/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Databricks
+.databricks/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,299 @@
+# ============================================================================
+# 통합 파이프라인 메타데이터 (SSOT - Single Source of Truth)
+# ============================================================================
+# 이 파일은 RDB ingestion부터 Bronze/Silver까지 전체 파이프라인의
+# 메타데이터를 하나의 소스로 관리합니다.
+#
+# 사용처:
+# 1. RDB ingestion job 생성
+# 2. dlt-meta onboarding JSON 생성  
+# 3. Databricks Asset Bundles (DABs) 생성
+# 4. Data lineage 추적
+# ============================================================================
+
+version: "1.0"
+project:
+  name: "gmarket_meta_pipeline"
+  description: "G마켓 데이터 파이프라인 - 통합 메타데이터 관리"
+  owner: "data_platform_team"
+  tags:
+    - "gmarket"
+    - "meta"
+    - "production"
+
+# ============================================================================
+# 데이터 플로우 정의
+# ============================================================================
+dataflows:
+  - dataflow_id: "item_goods_option"  # 고유 ID
+    dataflow_group: "item_group"   # dlt-meta group
+    description: "상품 옵션 정부 파이프라인"
+    enabled: true  # 활성화 여부
+    schedule:
+      cron: "0 6 * * *"  # 매일 새벽 6시
+      timezone: "Asia/Seoul"
+    
+    # ------------------------------------------------------------------------
+    # Stage 1: RDB Source (SQL Server)
+    # ------------------------------------------------------------------------
+    source:
+      stage: "rdb_ingestion"
+      type: "rdb_jdbc"
+      connection:
+        connection_name: "gdevdb02"
+        jdbc_url: "jdbc:sqlserver://gdevdb02.baikalx.com:1433;database=item"
+        driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+        secrets:
+          scope: "pipeline-cred-baikalx"
+          username_key: "gdevdb02_username"
+          password_key: "gdevdb02_password"
+      
+      extraction:
+        # SQL Server의 temp table 패턴 지원
+        prepare_query: |
+          SELECT 
+            SYNC_ID,
+            OPT_NO,
+            OPERATION_TYPE,
+            INS_DATE,
+            INS_OPRT
+          INTO #historytemp
+          FROM itemsyncdb..s_goods_option WITH (NOLOCK)
+          WHERE INS_DATE >= '${start_date}';
+          
+          CREATE NONCLUSTERED INDEX X_historytemp_01 ON #historytemp(OPT_NO);
+        
+        main_query: |
+          SELECT 
+            goo.OPT_NO,
+            goo.OPT_GD_NO,
+            goo.INFO_TYPE,
+            goo.DISP_TYPE,
+            goo.OPT_NM,
+            goo.OPT_VALUE,
+            goo.SORT_ORDER,
+            goo.OPT_PRICE,
+            goo.INVENTORY_CNT,
+            goo.VERSION_CHG_DT,
+            goo.REG_ID,
+            goo.REG_DT,
+            goo.CHG_ID,
+            goo.CHG_DT,
+            goo.FTBL,
+            goo.FKEY,
+            goo.FTYPE,
+            goo.CHANGED,
+            goo.OPT_STAT,
+            goo.OPT_NM_SORT_ORDER,
+            goo.OPT_VALUE_2,
+            goo.USE_YN,
+            goo.REP_IMAGE_URL,
+            goo.OPT_MASTER_SEQ,
+            goo.SELLER_MANAGE_VALUE,
+            goo.SKU_MATCHING_VER_NO,
+            goo.ENG_OPT_NM,
+            goo.ENG_OPT_VALUE,
+            goo.ENG_OPT_VALUE_2,
+            goo.SINGLE_OPT_SEQ,
+            goo.STOCK_ID,
+            ht.SYNC_ID,
+            ht.OPT_NO AS S_OPT_NO,
+            ht.OPERATION_TYPE,
+            ht.INS_DATE,
+            ht.INS_OPRT
+          FROM #historytemp ht
+          LEFT JOIN item..goods_option goo WITH (NOLOCK) 
+            ON ht.OPT_NO = goo.OPT_NO
+        
+        read_options:
+          fetchsize: "1000"
+          numPartitions: "8" # spark 병렬도
+        
+        # 추출 파라미터 (스케줄 실행 시 동적 치환)
+        parameters:
+          start_date:
+            type: "date"
+            default: "2025-06-10"
+            runtime_value: "${trigger_time - timedelta(days=1)}" #어제날짜 
+    
+    # ------------------------------------------------------------------------
+    # Stage 2: Raw Bronze (RDB Ingestion 결과)
+    # ------------------------------------------------------------------------
+    raw_bronze:
+      catalog: "baikald1ws"
+      schema: "sdp_poc"
+      table: "item_goods_option_rdb_raw"
+      format: "delta"
+      write_mode: "append"
+      partition_columns:
+        - "ingest_dt"
+      table_properties:
+        delta.enableChangeDataFeed: "true" # CDF 활성화
+        delta.autoOptimize.optimizeWrite: "true"
+        delta.autoOptimize.autoCompact: "true"
+      metadata_columns:
+        ingest_dt: "${trigger_time.isoformat()}" # 수집 일시 (파티션 키)
+        _source_system: "gdevdb02" # 소스 시스템 추적
+        _ingestion_timestamp: "current_timestamp()"
+        _dataflow_id: "item_goods_option" # 어떤 파이프라인에서 왔는지
+    
+    # ------------------------------------------------------------------------
+    # Stage 3: Bronze (Filtered & Transformed)
+    # ------------------------------------------------------------------------
+    bronze:
+      catalog: "baikald1ws"
+      schema: "sdp_poc"
+      table: "item_goods_option_bronze"
+      table_comment: "상품 옵션 정보 Bronze 테이블"
+      
+      # dlt-meta source 설정 (raw_bronze를 읽음)
+      source_format: "delta"
+      source_reference: "raw_bronze"  # 위의 raw_bronze 참조
+      
+      reader_options: {}
+      
+      # Bronze 변환 로직
+      transformations:
+        - type: "filter"
+          condition: |
+            opt_gd_no IN (
+              SELECT filter_value 
+              FROM baikald1xs.oss_gold.gemini_dev_filter 
+              WHERE filter_type = 'product_id' 
+                AND UPPER(use_yn) = 'Y'
+            )
+        - type: "add_column"
+          columns:
+            process_timestamp: "current_timestamp()"
+      
+      partition_columns:
+        - "ingest_dt"
+      
+      table_properties:
+        delta.enableChangeDataFeed: "true"
+        delta.autoOptimize.optimizeWrite: "true"
+      
+      cluster_by:
+        - "OPT_NO"
+    
+    # ------------------------------------------------------------------------
+    # Stage 4: Silver (CDC & Business Logic)
+    # ------------------------------------------------------------------------
+    silver:
+      catalog: "baikald1ws"
+      schema: "sdp_poc"
+      table: "item_goods_option_silver"
+      table_comment: "상품 옵션 정보 Silver 테이블 (SCD Type 1)"
+      
+      # dlt-meta source 설정 (bronze를 읽음)
+      source_format: "delta"
+      source_reference: "bronze"
+      
+      # 변환 로직
+      transformations:
+        select_expressions:
+          - "OPT_NO"
+          - "OPT_GD_NO"
+          - "INFO_TYPE"
+          - "DISP_TYPE"
+          - "OPT_NM"
+          - "OPT_VALUE"
+          - "SORT_ORDER"
+          - "OPT_PRICE"
+          - "INVENTORY_CNT"
+          - "VERSION_CHG_DT"
+          - "REG_ID"
+          - "REG_DT"
+          - "CHG_ID"
+          - "CASE WHEN OPERATION_TYPE = 'D' THEN INS_DATE ELSE CHG_DT END as CHG_DT"
+          - "FTBL"
+          - "FKEY"
+          - "FTYPE"
+          - "CHANGED"
+          - "OPT_STAT"
+          - "OPT_NM_SORT_ORDER"
+          - "OPT_VALUE_2"
+          - "USE_YN"
+          - "REP_IMAGE_URL"
+          - "OPT_MASTER_SEQ"
+          - "SELLER_MANAGE_VALUE"
+          - "SKU_MATCHING_VER_NO"
+          - "ENG_OPT_NM"
+          - "ENG_OPT_VALUE"
+          - "ENG_OPT_VALUE_2"
+          - "SINGLE_OPT_SEQ"
+          - "STOCK_ID"
+          - "S_OPT_NO"
+          - "CASE WHEN OPERATION_TYPE = 'D' THEN 'Y' ELSE 'N' END as is_del"
+        
+        where_clauses:
+          - "ingest_dt > date_sub(current_date(), 1)"
+          - "ingest_dt <= current_date()"
+          - "((OPERATION_TYPE IN ('I', 'U') AND opt_no IS NOT NULL) OR (OPERATION_TYPE IN ('D') AND opt_no IS NULL))"
+        
+        # QUALIFY 대신 window function 사용 (dlt-meta 호환)
+        deduplication:
+          enabled: true
+          partition_by:
+            - "S_OPT_NO"
+          order_by:
+            - "OPERATION_TYPE"
+            - "SYNC_ID DESC"
+          row_number: 1
+      
+      # CDC Apply Changes 설정 (SCD Type 1)
+      cdc_apply_changes:
+        keys:
+          - "OPT_NO"
+        sequence_by: "SYNC_ID"
+        scd_type: "1"
+        apply_as_deletes: "is_del = 'Y'"
+        except_column_list:
+          - "SYNC_ID"
+          - "S_OPT_NO"
+          - "OPERATION_TYPE"
+          - "INS_DATE"
+          - "INS_OPRT"
+          - "ingest_dt"
+          - "is_del"
+          - "process_timestamp"
+      
+      # String 타입 컬럼 trim 적용
+      string_transformations:
+        rtrim: true
+      
+      table_properties:
+        delta.enableChangeDataFeed: "true"
+        delta.autoOptimize.optimizeWrite: "true"
+      
+      cluster_by:
+        - "OPT_NO"
+      
+      data_quality:
+        expectations:
+          - name: "valid_opt_no"
+            constraint: "OPT_NO IS NOT NULL"
+            action: "fail"
+          - name: "valid_opt_gd_no"
+            constraint: "OPT_GD_NO IS NOT NULL"
+            action: "warn"
+
+# ============================================================================
+# 환경별 설정
+# ============================================================================
+environments:
+  dev:
+    catalog: "baikald1ws"
+    source:
+      connection:
+        jdbc_url: "jdbc:sqlserver://gdevdb02-dev:1433;database=item"
+    schedule:
+      enabled: false
+  
+  prod:
+    catalog: "baikald1ws"
+    source:
+      connection:
+        jdbc_url: "jdbc:sqlserver://gdevdb02-prod:1433;database=item"
+    schedule:
+      enabled: true
