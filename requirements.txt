@@ -4,5 +4,8 @@
 # 메타데이터 처리 (YAML 파싱)
 PyYAML>=6.0
 
+# DLT-Meta (Delta Live Tables 메타데이터 기반 파이프라인)
+dlt-meta
+
 # Databricks CLI (선택사항 - 이미 설치되어 있으면 생략 가능)
 # databricks-cli>=0.18.0

@@ -1,69 +1,34 @@
-# 🚀 통합 메타데이터 기반 데이터 파이프라인 (SSOT)
+# 🚀 통합 메타데이터 기반 데이터 파이프라인
 
-RDB ingestion부터 dlt-meta Bronze/Silver까지 **하나의 메타데이터**로 관리하는 완전한 솔루션입니다.
-
-## 📋 목차
-
-- [빠른 시작](#-빠른-시작)
-- [주요 특징](#-주요-특징)
-- [디렉토리 구조](#-디렉토리-구조)
-- [상세 가이드](#-상세-가이드)
-- [아키텍처](#-아키텍처)
-- [문제 해결](#-문제-해결)
+RDB ingestion부터 dlt-meta Bronze/Silver까지 **하나의 YAML**로 관리하는 완전한 솔루션
 
 ---
 
 ## 🎯 빠른 시작
 
-### 1. Secrets 설정
-
-```bash
-databricks secrets create-scope pipeline-cred-baikalx
-databricks secrets put-secret --scope pipeline-cred-baikalx --key gdevdb02_username
-databricks secrets put-secret --scope pipeline-cred-baikalx --key gdevdb02_password
-```
-
-### 2. 메타데이터 작성
-
-`metadata/unified_pipeline_metadata.yml` 편집:
-
-```yaml
-dataflows:
-  - dataflow_id: "item_goods_option"
-    source:
-      type: "rdb_jdbc"
-      connection:
-        jdbc_url: "jdbc:sqlserver://your-server:1433;database=item"
-      extraction:
-        prepare_query: |
-          SELECT * INTO #temp FROM source_table
-        main_query: |
-          SELECT * FROM #temp
-```
-
-### 3. 설정 자동 생성
+### Mock 테스트 (RDB 연결 불필요)
 
 ```bash
 ./run_demo.sh dev
+databricks bundle deploy --target dev
+databricks bundle run setup_metadata --target dev
+databricks bundle run test_pipeline_with_mock_data --target dev
 ```
 
-**생성되는 파일:**
-- `generated/rdb_ingestion_*.json` - RDB 추출 설정
-- `generated/onboarding_*.json` - dlt-meta 설정
-- `generated/transformations_*.json` - Silver 변환 로직
-- `generated/dabs_*.yml` - DABs 리소스
-- `generated/metadata_ddl_*.sql` - 메타데이터 테이블
-
-### 4. 배포 및 실행
+### 프로덕션 (실제 RDB)
 
 ```bash
-# 검증
-databricks bundle validate --target dev
+# 1. Secrets 설정
+databricks secrets create-scope pipeline-cred-baikalx
+databricks secrets put-secret --scope pipeline-cred-baikalx --key gdevdb02_username
+databricks secrets put-secret --scope pipeline-cred-baikalx --key gdevdb02_password
 
-# 배포
+# 2. 메타데이터 확인 및 수정
+vi metadata/unified_pipeline_metadata.yml
+
+# 3. 실행
+./run_demo.sh dev
 databricks bundle deploy --target dev
-
-# 실행
 databricks bundle run orchestrator_full_pipeline --target dev
 ```
 
@@ -71,271 +36,218 @@ databricks bundle run orchestrator_full_pipeline --target dev
 
 ## ✨ 주요 특징
 
-### 🎯 SSOT (Single Source of Truth)
-- ✅ 하나의 YAML로 RDB ingestion + Bronze + Silver 관리
-- ✅ 중복 제거 및 일관성 보장
-- ✅ Git으로 버전 관리
-
-### 🤖 완전 자동화
-- ✅ 설정 파일 자동 생성
-- ✅ DABs 리소스 자동 생성
-- ✅ 메타데이터 테이블 자동 생성
-
-### 🌍 환경 분리
-- ✅ dev/prod 자동 오버라이드
-- ✅ 안전한 배포 프로세스
-
-### 🔍 메타데이터 추적
-- ✅ 파이프라인 실행 이력
-- ✅ 데이터 계보 (lineage)
-- ✅ 버전 관리
+| 특징 | 설명 |
+|------|------|
+| **SSOT** | 하나의 YAML로 전체 관리 |
+| **자동화** | 설정 파일 자동 생성 |
+| **Mock 테스트** | RDB 없이 전체 파이프라인 테스트 |
+| **CDC** | Change Data Capture 지원 |
+| **DQE** | Data Quality Expectations 통합 |
+| **환경 분리** | dev/prod 자동 오버라이드 |
 
 ---
 
 ## 📁 디렉토리 구조
 
 ```
-demo/dab_meta_gmarket/
+dab_meta_gmarket/
 ├── metadata/
-│   └── unified_pipeline_metadata.yml    # ⭐ SSOT - 모든 메타데이터
+│   └── unified_pipeline_metadata.yml    # ⭐ SSOT
 │
 ├── scripts/
-│   └── unified_metadata_processor.py    # 자동 생성 엔진
+│   ├── unified_metadata_processor.py    # 자동 생성 엔진
+│   └── create_mock_data.py              # Mock 데이터 생성
 │
 ├── notebooks/
-│   ├── rdb_ingestion_runner.py         # RDB 추출 실행
-│   ├── dlt_pipeline_runner.py          # DLT 파이프라인 실행
-│   └── data_quality_validator.py       # 데이터 품질 검증
+│   ├── rdb_ingestion_runner.py          # RDB 추출
+│   ├── dlt_pipeline_runner.py           # DLT 실행
+│   └── data_quality_validator.py        # 품질 검증
 │
-├── generated/                           # 자동 생성 (git ignore)
+├── src/                                 # dlt-meta 소스
+│   ├── dataflow_spec.py                 # Bronze/Silver Spec
+│   ├── dataflow_pipeline.py             # DLT 파이프라인 로직
+│   └── pipeline_readers.py              # 메타데이터 읽기
+│
+├── generated/                           # 자동 생성 (배포 시)
 │   ├── rdb_ingestion_*.json
 │   ├── onboarding_*.json
 │   ├── transformations_*.json
 │   ├── dabs_*.yml
-│   └── metadata_ddl_*.sql
+│   └── dqe/*.json
 │
 ├── databricks.yml                       # DABs 메인 설정
-├── run_demo.sh                         # 원클릭 실행 스크립트
-├── .gitignore                          # Git 설정
-│
-└── README.md                           # 이 문서
+└── run_demo.sh                          # 원클릭 실행
 ```
 
 ---
 
-## 📖 상세 가이드
+## 🔧 메타데이터 구조
 
-### 데이터 플로우
+`metadata/unified_pipeline_metadata.yml` (SSOT):
 
-```
-SQL Server (RDB)
-    ↓ [JDBC Extraction]
-    ↓ (prepare_query + main_query)
-Raw Bronze (Delta)
-    ↓ [dlt-meta Bronze Pipeline]
-    ↓ (filtering + transformations)
-Bronze (Delta)
-    ↓ [dlt-meta Silver Pipeline]
-    ↓ (CDC SCD Type 1 + business logic)
-Silver (Delta)
-```
-
-### 메타데이터 구조
-
-#### 1. Source (RDB)
 ```yaml
-source:
-  type: "rdb_jdbc"
-  connection:
-    connection_name: "gdevdb02"
-    jdbc_url: "jdbc:sqlserver://..."
-    secrets:
-      scope: "pipeline-cred-baikalx"
-  extraction:
-    prepare_query: |
-      -- SQL Server temp table 생성
-    main_query: |
-      -- 데이터 추출
+dataflows:
+  - dataflow_id: "item_goods_option"
+    dataflow_group: "item"
+    
+    source:                              # RDB 설정
+      type: "rdb_jdbc"
+      connection:
+        jdbc_url: "jdbc:sqlserver://..."
+      extraction:
+        main_query: "SELECT * FROM..."
+    
+    bronze:                              # Bronze Layer
+      catalog: "baikald1ws"
+      schema: "sdp_poc"
+      table: "item_goods_option_raw"
+      transformations:
+        add_columns:
+          - name: "ingest_dt"
+            expr: "current_date()"
+    
+    silver:                              # Silver Layer
+      catalog: "baikald1ws"
+      schema: "sdp_poc"
+      table: "item_goods_option_silver"
+      cdc_apply_changes:                 # CDC 설정
+        keys: ["OPT_NO"]
+        sequence_by: "SYNC_ID"
+        scd_type: 2
+      data_quality:                      # DQE 설정
+        expectations:
+          - name: "valid_opt_no"
+            constraint: "OPT_NO IS NOT NULL"
+            action: "fail"
 ```
 
-#### 2. Raw Bronze
-```yaml
-raw_bronze:
-  catalog: "baikald1ws"
-  schema: "sdp_poc"
-  table: "item_goods_option_rdb_raw"
-  format: "delta"
-  metadata_columns:
-    ingest_dt: "${trigger_time.isoformat()}"
-    _source_system: "gdevdb02"
+---
+
+## 🔄 실행 흐름
+
+### 1. Mock 테스트 Job (`test_pipeline_with_mock_data`)
+
+```
+Task 1: generate_mock_data
+  → 70건 생성 (7일 × 10건/일)
+  ↓
+Task 2: run_dlt_pipeline (full_refresh)
+  → Bronze: 필터링 + 변환
+  → Silver: CDC + DQE
+  ↓
+Task 3: validate_data_quality
+  → 품질 검증 리포트
 ```
 
-#### 3. Bronze
-```yaml
-bronze:
-  catalog: "baikald1ws"
-  schema: "sdp_poc"
-  table: "item_goods_option_bronze"
-  source_format: "delta"
-  source_reference: "raw_bronze"
-  transformations:
-    - type: "filter"
-      condition: "opt_gd_no IN (...)"
+### 2. 프로덕션 Job (`orchestrator_full_pipeline`)
+
+```
+Task 1: ingest_rdb
+  → RDB 데이터 추출
+  ↓
+Task 2: run_dlt_pipeline (incremental)
+  → Bronze: 필터링 + 변환
+  → Silver: CDC + DQE
+  ↓
+Task 3: validate_data_quality
+  → 품질 검증 리포트
 ```
 
-#### 4. Silver
+---
+
+## 🛠️ 고급 사용법
+
+### 메타데이터 재생성
+
+```bash
+./run_demo.sh dev
+```
+
+자동 생성:
+- `generated/rdb_ingestion_*.json`
+- `generated/onboarding_*.json`
+- `generated/transformations_*.json`
+- `generated/dabs_*.yml`
+- `generated/dqe/*.json`
+
+### 새 테이블 추가
+
+1. `metadata/unified_pipeline_metadata.yml`에 dataflow 추가
+2. `./run_demo.sh dev` 실행
+3. `databricks bundle deploy --target dev`
+4. Job 실행
+
+### DQE 추가
+
 ```yaml
 silver:
-  catalog: "baikald1ws"
-  schema: "sdp_poc"
-  table: "item_goods_option_silver"
+  data_quality:
+    expectations:
+      - name: "valid_price"
+        constraint: "OPT_PRICE >= 0"
+        action: "drop"          # drop/fail/warn/quarantine
+```
+
+### CDC 설정
+
+```yaml
+silver:
   cdc_apply_changes:
-    keys: ["OPT_NO"]
-    sequence_by: "SYNC_ID"
-    scd_type: "1"
-```
-
-### 환경별 설정
-
-```yaml
-environments:
-  dev:
-    catalog: "baikald1ws"
-    schedule:
-      enabled: false  # 수동 실행
-  
-  prod:
-    catalog: "baikald1ws"
-    schedule:
-      enabled: true   # 자동 실행
+    keys: ["OPT_NO"]           # Primary Key
+    sequence_by: "SYNC_ID"     # 순서 결정 컬럼
+    scd_type: 2                # SCD Type 2
+    track_history_except_column_list:
+      - "SYNC_ID"
+      - "_ingestion_timestamp"
 ```
 
 ---
 
-## 🏗️ 아키텍처
+## 🐛 문제 해결
 
-### 전체 아키텍처
-
-```
-┌─────────────────────────────────────────┐
-│  unified_pipeline_metadata.yml (SSOT)  │
-└─────────────────────────────────────────┘
-                ↓
-┌─────────────────────────────────────────┐
-│  unified_metadata_processor.py          │
-└─────────────────────────────────────────┘
-                ↓
-    ┌───────────┴───────────┐
-    ↓                       ↓
-RDB Config          dlt-meta Onboarding
-    ↓                       ↓
-[Execution]            [Execution]
-```
-
-### 실행 흐름
-
-```
-Task 1: RDB Ingestion
-  └─ rdb_ingestion_runner.py
-     └─ SQL Server → Raw Bronze
-
-Task 2: DLT Bronze/Silver
-  └─ dlt_pipeline_runner.py
-     └─ Raw Bronze → Bronze → Silver
-
-Task 3: Data Quality
-  └─ data_quality_validator.py
-     └─ 품질 검증 및 리포트
-```
-
-### 메타데이터 테이블
-
-자동 생성되는 메타데이터 테이블:
-
-1. **pipeline_execution_history** - 파이프라인 실행 이력
-2. **data_lineage** - 데이터 계보 추적
-3. **metadata_versions** - 메타데이터 버전 관리
-
----
-
-## 🔧 문제 해결
-
-### Q: Secrets 에러 발생
-
+### Secrets 에러
 ```bash
-# Scope 확인
-databricks secrets list-scopes
-
-# Secret 확인
 databricks secrets list --scope pipeline-cred-baikalx
-
-# 재설정
-databricks secrets put-secret --scope pipeline-cred-baikalx --key gdevdb02_username
+databricks secrets list-scopes
 ```
 
-### Q: generated/ 폴더가 비어있음
+### Instance Type 에러
+- AWS: `i3.xlarge`, `r5.large`
+- Azure: `Standard_DS3_v2`, `Standard_E4s_v3`
+- GCP: `n1-standard-4`, `n2-standard-4`
 
+### DLT 실패
+- UI → Delta Live Tables → Event Log 확인
+- `full_refresh: true`로 재실행
+
+### Mock 데이터 재생성
 ```bash
-# 메타데이터 재생성
-./run_demo.sh dev
-
-# 또는 수동 실행
-python scripts/unified_metadata_processor.py \
-  --metadata-file metadata/unified_pipeline_metadata.yml \
-  --output-dir generated/ \
-  --environment dev
-```
-
-### Q: DLT Pipeline 실행 실패
-
-```bash
-# 로그 확인
-databricks pipelines get <pipeline-id> --output json | jq '.latest_updates[0]'
-
-# dlt-meta 라이브러리 확인
-# DLT Pipeline 설정 → Libraries → dlt-meta>=0.0.10 확인
-```
-
-### Q: RDB 연결 실패
-
-메타데이터 파일에서 JDBC URL 확인:
-
-```yaml
-source:
-  connection:
-    jdbc_url: "jdbc:sqlserver://gdevdb02.baikalx.com:1433;database=item"
+databricks bundle run create_mock_data --target dev
 ```
 
 ---
 
-## 📚 추가 문서
+## 📊 데이터 확인
 
-- **상세 가이드**: [README_UNIFIED_METADATA.md](README_UNIFIED_METADATA.md)
-- **빠른 시작**: [QUICKSTART.md](QUICKSTART.md)
-- **아키텍처**: [ARCHITECTURE.md](ARCHITECTURE.md)
+```sql
+-- Bronze 테이블
+SELECT COUNT(*) FROM baikald1ws.sdp_poc.item_goods_option_raw;
 
----
+-- Silver 테이블
+SELECT COUNT(*) FROM baikald1ws.sdp_poc.item_goods_option_silver;
 
-## 🤝 기여 및 지원
+-- 데이터 품질 확인
+SELECT 
+  COUNT_IF(OPT_NO IS NULL) as null_opt_no,
+  COUNT_IF(OPT_GD_NO IS NULL) as null_opt_gd_no
+FROM baikald1ws.sdp_poc.item_goods_option_silver;
 
-이 프로젝트는 dlt-meta 프레임워크를 확장한 것입니다.
+-- CDC 확인 (SCD Type 2)
+SELECT OPT_NO, __START_AT, __END_AT, is_del 
+FROM baikald1ws.sdp_poc.item_goods_option_silver
+WHERE OPT_NO = 12345
+ORDER BY __START_AT;
+```
 
-- [dlt-meta Documentation](https://databrickslabs.github.io/dlt-meta/)
-- [Databricks Asset Bundles](https://docs.databricks.com/dev-tools/bundles/)
 
----
 
-## 📝 변경 이력
-
-### v1.0.0 (2026-01-26)
-- ✨ 통합 메타데이터 SSOT 패턴 구현
-- ✨ RDB (SQL Server) 소스 지원
-- ✨ dlt-meta 통합
-- ✨ DABs 오케스트레이션
-- ✨ Lakeflow SDP (dp) API 지원
-- ✨ 메타데이터 lineage 추적
-- ✨ Serverless SQL Warehouse 지원
-
----
-
-**🎉 이제 SSOT로 메타데이터를 관리하세요!**

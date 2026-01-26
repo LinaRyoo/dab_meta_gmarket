@@ -95,8 +95,18 @@ def replace_parameters(query: str, trigger_time: datetime) -> str:
     # Custom 파라미터 처리
     for param_name, param_config in parameters.items():
         if "runtime_value" in param_config:
-            # Python 표현식 평가
-            runtime_value = eval(param_config["runtime_value"])
+            # Python 표현식 평가 (${} wrapper 제거)
+            expr = param_config["runtime_value"]
+            if expr.startswith("${") and expr.endswith("}"):
+                expr = expr[2:-1]  # ${...} → ...
+            # eval에 필요한 변수들을 scope에 제공
+            runtime_value = eval(expr, {"trigger_time": trigger_time, "timedelta": timedelta})
+            # datetime 객체는 ISO 형식으로 변환
+            if isinstance(runtime_value, (datetime, timedelta)):
+                if hasattr(runtime_value, 'isoformat'):
+                    runtime_value = runtime_value.isoformat()
+                else:
+                    runtime_value = str(runtime_value)
         else:
             runtime_value = param_config.get("default", "")
         
@@ -172,8 +182,14 @@ for col_name, col_expression in metadata_columns.items():
     if col_expression == "current_timestamp()":
         df = df.withColumn(col_name, F.current_timestamp())
     elif col_expression.startswith("${") and col_expression.endswith("}"):
-        # 동적 값 평가
-        value = eval(col_expression.replace("${", "").replace("}", ""))
+        # 동적 값 평가 (${} wrapper 제거 및 scope 제공)
+        expr = col_expression[2:-1]  # ${...} → ...
+        value = eval(expr, {
+            "trigger_time": trigger_time, 
+            "timedelta": timedelta,
+            "execution_id": execution_id,
+            "dataflow_id": dataflow_id
+        })
         df = df.withColumn(col_name, F.lit(value))
     else:
         # 리터럴 값

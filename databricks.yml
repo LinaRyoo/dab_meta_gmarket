@@ -20,6 +20,13 @@
 
 bundle:
   name: gmarket_meta_pipeline
+
+sync:
+  # generated 폴더, scripts, requirements.txt를 workspace에 동기화
+  include:
+    - "generated/**"
+    - "scripts/**"
+    - "requirements.txt"
   
 include:
   # 자동 생성된 개별 dataflow DABs 포함
@@ -36,10 +43,10 @@ variables:
     description: "Databricks secrets scope for DB credentials"
     default: "pipeline-cred-baikalx"
   
-  # SQL Warehouse (Serverless)
-  use_serverless_warehouse:
-    description: "Use Serverless SQL Warehouse for metadata operations"
-    default: true
+  # SQL Warehouse ID
+  warehouse_id:
+    description: "SQL Warehouse ID for metadata operations"
+    default: "4b9b953939869799"  # 실제 warehouse ID로 교체
   
   # Environment
   environment:
@@ -79,16 +86,43 @@ resources:
           sql_task:
             file:
               path: ./generated/metadata_ddl_item_goods_option.sql
-            warehouse:
-              # Serverless SQL Warehouse 사용
-              serverless: true
+            warehouse_id: "${var.warehouse_id}"
       
       max_concurrent_runs: 1
       tags:
         project: "dlt-meta-unified"
         stage: "setup"
     
-    # 전체 파이프라인 Orchestrator
+    # Mock 데이터 생성 Job (테스트용)
+    create_mock_data:
+      name: "create_mock_data"
+      tasks:
+        - task_key: generate_mock_data
+          job_cluster_key: "mock_data_cluster"
+          spark_python_task:
+            python_file: ./scripts/create_mock_data.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--days"
+              - "7"
+              - "--records-per-day"
+              - "10"
+      
+      job_clusters:
+        - job_cluster_key: "mock_data_cluster"
+          new_cluster:
+            spark_version: "17.3.x-scala2.13"
+            node_type_id: "i3.xlarge"
+            num_workers: 1  
+      
+      max_concurrent_runs: 1
+      tags:
+        project: "dlt-meta-unified"
+        stage: "setup"
+        purpose: "testing"
+    
+    # 전체 파이프라인 Orchestrator (실제 RDB 연동)
     orchestrator_full_pipeline:
       name: "orchestrator_item_goods_option_full"
       tasks:
@@ -96,19 +130,16 @@ resources:
         - task_key: rdb_ingestion
           job_cluster_key: "ingestion_cluster"
           notebook_task:
-            notebook_path: ./notebooks/rdb_ingestion_runner
+            notebook_path: ./notebooks/rdb_ingestion_runner.py
             base_parameters:
-              config_file: "generated/rdb_ingestion_item_goods_option.json"
+              config_file: "${workspace.root_path}/files/generated/rdb_ingestion_item_goods_option.json"
               environment: "${var.environment}"
-          libraries:
-            - maven:
-                coordinates: "com.microsoft.sqlserver:mssql-jdbc:12.4.0.jre11"
+              trigger_time: "{{job.start_time.iso_datetime}}"
         
         # Task 2: DLT Bronze/Silver Pipeline
         - task_key: dlt_bronze_silver
           depends_on:
             - task_key: rdb_ingestion
-              outcome: "success"
           pipeline_task:
             pipeline_id: "${resources.pipelines.dlt_item_goods_option.id}"
             full_refresh: false
@@ -117,10 +148,9 @@ resources:
         - task_key: validate_data_quality
           depends_on:
             - task_key: dlt_bronze_silver
-              outcome: "success"
           job_cluster_key: "validation_cluster"
           notebook_task:
-            notebook_path: ./notebooks/data_quality_validator
+            notebook_path: ./notebooks/data_quality_validator.py
             base_parameters:
               dataflow_id: "item_goods_option"
               catalog: "${var.catalog_name}"
@@ -145,31 +175,86 @@ resources:
       schedule:
         quartz_cron_expression: "0 0 2 * * ?"  # 매일 새벽 2시
         timezone_id: "Asia/Seoul"
-        pause_status: "${var.environment == 'dev' ? 'PAUSED' : 'UNPAUSED'}"
+        pause_status: "PAUSED"
       
       max_concurrent_runs: 1
       
-      email_notifications:
-        on_failure:
-          - "lina.ryoo@databricks.com"
+      # email_notifications:
+        # on_failure:
+        #   - "lina.ryoo@databricks.com"
       
       tags:
         project: "dlt-meta-unified"
         dataflow_id: "item_goods_option"
         environment: "${var.environment}"
+    
+    # 테스트 파이프라인 Orchestrator (Mock 데이터 기반)
+    test_pipeline_with_mock_data:
+      name: "test_item_goods_option_with_mock_data"
+      tasks:
+        # Task 1: Mock 데이터 생성
+        - task_key: generate_mock_data
+          job_cluster_key: "test_cluster"
+          spark_python_task:
+            python_file: ./scripts/create_mock_data.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--days"
+              - "7"
+              - "--records-per-day"
+              - "10"
+        
+        # Task 2: DLT Bronze/Silver Pipeline 실행 (Full Refresh)
+        - task_key: run_dlt_pipeline
+          depends_on:
+            - task_key: generate_mock_data
+          pipeline_task:
+            pipeline_id: "${resources.pipelines.dlt_item_goods_option.id}"
+            full_refresh: true
+        
+        # Task 3: Data Quality Validation
+        - task_key: validate_data_quality
+          depends_on:
+            - task_key: run_dlt_pipeline
+          job_cluster_key: "test_cluster"
+          notebook_task:
+            notebook_path: ./notebooks/data_quality_validator.py
+            base_parameters:
+              dataflow_id: "item_goods_option"
+              catalog: "${var.catalog_name}"
+      
+      job_clusters:
+        - job_cluster_key: "test_cluster"
+          new_cluster:
+            spark_version: "17.3.x-scala2.13"
+            node_type_id: "i3.xlarge"
+            num_workers: 1
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.databricks.delta.autoCompact.enabled: "true"
+      
+      max_concurrent_runs: 1
+      
+      tags:
+        project: "dlt-meta-unified"
+        dataflow_id: "item_goods_option"
+        environment: "${var.environment}"
+        purpose: "testing"
 
   # DLT Pipeline 리소스는 generated/dabs_*.yml에서 자동 생성됨
   # (위의 include 섹션 참조)
 
 workspace:
   root_path: "/Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}"
-  
-  # 필요한 디렉토리 자동 생성
-  file_path: ./
 
 permissions:
-  - level: CAN_MANAGE
-    group_name: "data_platform_engineers"
+  # 현재 배포 사용자
+  - user_name: lina.ryoo@databricks.com
+    level: CAN_MANAGE
   
-  - level: CAN_RUN
-    service_principal_name: "123456-abcdef"
+  # - level: CAN_MANAGE
+  #   group_name: "data_platform_engineers"
+  
+  # - level: CAN_RUN
+  #   service_principal_name: "123456-abcdef"

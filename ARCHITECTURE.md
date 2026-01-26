@@ -131,11 +131,43 @@ Silver Table
 
 ## 🔄 워크플로우 오케스트레이션
 
-### DABs Orchestrator Job
+### 🧪 테스트 Job (test_pipeline_with_mock_data)
+
+```
+┌─────────────────────────────────────────────────┐
+│  test_item_goods_option_with_mock_data          │
+│  (Mock 데이터 기반 통합 테스트)                 │
+└─────────────────────────────────────────────────┘
+                      ↓
+         ┌────────────┴────────────┐
+         │                         │
+         ↓                         ↓
+┌──────────────────┐    ┌──────────────────────┐
+│  Task 1:         │    │  Task 2:              │
+│  Mock 데이터     │───→│  DLT Pipeline         │
+│  생성            │    │  (Full Refresh)       │
+└──────────────────┘    └──────────────────────┘
+   (python script)             (pipeline)
+         ↓                         ↓
+   Raw Bronze           Bronze → Silver
+   + Metadata                (CDC + DQE)
+                               ↓
+                    ┌──────────────────────┐
+                    │  Task 3:              │
+                    │  Data Quality         │
+                    │  Validation           │
+                    └──────────────────────┘
+                           (notebook)
+                               ↓
+                       검증 리포트 생성
+```
+
+### 🚀 프로덕션 Job (orchestrator_full_pipeline)
 
 ```
 ┌─────────────────────────────────────────┐
 │  orchestrator_item_goods_option_full    │
+│  (실제 RDB 연동)                        │
 └─────────────────────────────────────────┘
                   ↓
         ┌─────────┴─────────┐
@@ -146,26 +178,49 @@ Silver Table
 │  RDB         │───→│  dlt-meta        │
 │  Ingestion   │    │  Bronze/Silver   │
 └──────────────┘    └──────────────────┘
-   (notebook)              (pipeline)
+   (notebook)         (pipeline, 증분)
         ↓                       ↓
    Raw Bronze ──────────→ Bronze → Silver
-                (reads)
+                (reads)        ↓
+                    ┌──────────────────┐
+                    │  Task 3:          │
+                    │  Data Quality     │
+                    │  Validation       │
+                    └──────────────────┘
 ```
 
-### 실행 흐름
+### 테스트 환경 실행 흐름
+
+1. **수동 실행** (databricks bundle run)
+2. **Task 1: Mock 데이터 생성** (~1분)
+   - Script: `create_mock_data.py`
+   - Output: Raw Bronze (70건) + Metadata 테이블
+   - 특징: 7일치 CDC 시뮬레이션 데이터
+3. **Task 2: DLT Pipeline (Full Refresh)** (~3-5분)
+   - Pipeline: `dlt_item_goods_option`
+   - Mode: `full_refresh: true` (테스트용)
+   - Output: Bronze + Silver Delta
+   - CDC: SCD Type 1 적용
+   - DQE: expect_or_fail + expect 검증
+4. **Task 3: Data Quality Validation** (~1분)
+   - Notebook: `data_quality_validator.py`
+   - 검증: 테이블 존재, 레코드 수, NULL, 중복
+   - Output: JSON 리포트
+
+### 프로덕션 환경 실행 흐름
 
 1. **Scheduled Trigger** (cron: 0 2 * * *)
-2. **Task 1: RDB Ingestion**
+2. **Task 1: RDB Ingestion** (~5-10분)
    - Notebook 실행: `rdb_ingestion_runner.py`
    - Config: `generated/rdb_ingestion_item_goods_option.json`
    - Output: Raw Bronze Delta
-   - Duration: ~5-10분
-3. **Task 2: DLT Bronze/Silver** (depends_on: Task 1)
+   - 특징: JDBC 연결, Secrets 사용
+3. **Task 2: DLT Bronze/Silver** (~10-15분)
    - Pipeline 실행: `dlt_item_goods_option`
-   - Config: dlt-meta onboarding JSON
+   - Mode: `full_refresh: false` (증분 처리)
    - Output: Bronze + Silver Delta
-   - Duration: ~10-15분
-4. **Task 3: Data Quality** (optional)
+   - 특징: CDC 증분 업데이트
+4. **Task 3: Data Quality** (~1-2분)
    - Validation checks
    - Alert on failures
 
@@ -390,12 +445,4 @@ clusters:
       spark.databricks.delta.optimizeWrite.enabled: "true"
 ```
 
----
 
-## 📚 참고 문서
-
-- [Unified Metadata Schema](metadata/unified_pipeline_metadata.yml)
-- [Processor Implementation](scripts/unified_metadata_processor.py)
-- [RDB Ingestion Runner](notebooks/rdb_ingestion_runner.py)
-- [Quick Start Guide](QUICKSTART.md)
-- [Full Documentation](README_UNIFIED_METADATA.md)

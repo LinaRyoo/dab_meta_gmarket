@@ -44,16 +44,28 @@ echo "  Output Directory: $OUTPUT_DIR"
 echo "============================================================================"
 echo ""
 
-# Step 1: 메타데이터 파일 검증
-log_info "Step 1/6: Validating metadata file..."
+# Step 1: Python 의존성 확인
+log_info "Step 1/7: Checking Python dependencies..."
+if ! python3 -c "import yaml" &> /dev/null; then
+    log_warning "PyYAML not installed. Installing..."
+    pip install PyYAML || {
+        log_error "Failed to install PyYAML. Please run: pip install PyYAML"
+        exit 1
+    }
+    log_success "PyYAML installed"
+else
+    log_success "Python dependencies OK"
+fi
+
+log_info "Step 2/7: Validating metadata file..."
 if [ ! -f "$METADATA_FILE" ]; then
     log_error "Metadata file not found: $METADATA_FILE"
     exit 1
 fi
 log_success "Metadata file validated"
 
-# Step 2: 메타데이터 처리 및 설정 생성
-log_info "Step 2/6: Processing metadata and generating configurations..."
+# Step 3: 메타데이터 처리 및 설정 생성
+log_info "Step 3/7: Processing metadata and generating configurations..."
 python scripts/unified_metadata_processor.py \
     --metadata-file "$METADATA_FILE" \
     --output-dir "$OUTPUT_DIR" \
@@ -66,16 +78,16 @@ else
     exit 1
 fi
 
-# Step 3: 생성된 파일 확인
-log_info "Step 3/6: Verifying generated files..."
+# Step 4: 생성된 파일 확인
+log_info "Step 4/7: Verifying generated files..."
 echo ""
 echo "Generated files:"
 ls -lh "$OUTPUT_DIR"
 echo ""
 log_success "Files verified"
 
-# Step 4: DABs validation
-log_info "Step 4/6: Validating Databricks Asset Bundles..."
+# Step 5: DABs validation
+log_info "Step 5/7: Validating Databricks Asset Bundles..."
 if command -v databricks &> /dev/null; then
     databricks bundle validate --target "$ENVIRONMENT" || {
         log_warning "DABs validation failed (continuing...)"
@@ -85,8 +97,8 @@ else
     log_warning "Databricks CLI not found, skipping validation"
 fi
 
-# Step 5: 메타데이터 테이블 DDL 확인
-log_info "Step 5/6: Checking metadata table DDL..."
+# Step 6: 메타데이터 테이블 DDL 확인
+log_info "Step 6/7: Checking metadata table DDL..."
 DDL_FILE=$(find "$OUTPUT_DIR" -name "metadata_ddl_*.sql" -print -quit)
 if [ -f "$DDL_FILE" ]; then
     log_info "Found DDL file: $DDL_FILE"
@@ -99,9 +111,9 @@ else
     log_warning "No DDL file found"
 fi
 
-# Step 6: 배포 옵션 안내
+# Step 7: 배포 옵션 안내
 echo ""
-log_info "Step 6/6: Deployment options"
+log_info "Step 7/7: Deployment options"
 echo ""
 echo "To deploy to Databricks:"
 echo "  1. Ensure Databricks CLI is configured:"

@@ -125,8 +125,8 @@ dataflows:
       table: "item_goods_option_rdb_raw"
       format: "delta"
       write_mode: "append"
-      partition_columns:
-        - "ingest_dt"
+      # partition_columns:  # Liquid Clustering 사용 시 파티셔닝 불가
+      #   - "ingest_dt"
       table_properties:
         delta.enableChangeDataFeed: "true" # CDF 활성화
         delta.autoOptimize.optimizeWrite: "true"
@@ -166,8 +166,8 @@ dataflows:
           columns:
             process_timestamp: "current_timestamp()"
       
-      partition_columns:
-        - "ingest_dt"
+      # partition_columns:  # Liquid Clustering 사용 시 파티셔닝 불가
+      #   - "ingest_dt"
       
       table_properties:
         delta.enableChangeDataFeed: "true"
@@ -192,6 +192,7 @@ dataflows:
       # 변환 로직
       transformations:
         select_expressions:
+          # 비즈니스 컬럼들
           - "OPT_NO"
           - "OPT_GD_NO"
           - "INFO_TYPE"
@@ -205,7 +206,7 @@ dataflows:
           - "REG_ID"
           - "REG_DT"
           - "CHG_ID"
-          - "CASE WHEN OPERATION_TYPE = 'D' THEN INS_DATE ELSE CHG_DT END as CHG_DT"
+          - "CHG_DT as CHG_DT_ORIG"
           - "FTBL"
           - "FKEY"
           - "FTYPE"
@@ -223,7 +224,19 @@ dataflows:
           - "ENG_OPT_VALUE_2"
           - "SINGLE_OPT_SEQ"
           - "STOCK_ID"
+          # CDC 컬럼들 (원본)
+          - "SYNC_ID"
           - "S_OPT_NO"
+          - "OPERATION_TYPE"
+          - "INS_DATE"
+          - "INS_OPRT"
+          # 메타데이터 컬럼들 (필터링에 사용)
+          - "ingest_dt"
+          - "_source_system"
+          - "_ingestion_timestamp"
+          - "_dataflow_id"
+          # 계산된 컬럼들 (마지막에 배치)
+          - "CASE WHEN OPERATION_TYPE = 'D' THEN INS_DATE ELSE CHG_DT_ORIG END as CHG_DT"
           - "CASE WHEN OPERATION_TYPE = 'D' THEN 'Y' ELSE 'N' END as is_del"
         
         where_clauses:
@@ -255,8 +268,11 @@ dataflows:
           - "INS_DATE"
           - "INS_OPRT"
           - "ingest_dt"
+          - "_source_system"
+          - "_ingestion_timestamp"
+          - "_dataflow_id"
+          - "CHG_DT_ORIG"
           - "is_del"
-          - "process_timestamp"
       
       # String 타입 컬럼 trim 적용
       string_transformations:

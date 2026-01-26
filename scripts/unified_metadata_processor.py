@@ -16,9 +16,9 @@ Usage:
 
 import yaml
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any
-from datetime import datetime
 import argparse
 
 
@@ -144,63 +144,135 @@ class UnifiedMetadataProcessor:
         bronze = dataflow["bronze"]
         silver = dataflow["silver"]
         
-        onboarding = [
-            {
-                "data_flow_id": dataflow_id,
-                "data_flow_group": dataflow["dataflow_group"],
-                "source_system": dataflow["source"]["connection"]["connection_name"],
-                "source_format": bronze["source_format"],
-                
-                # Source details (raw_bronze 참조)
-                "source_details": {
-                    "source_catalog": raw_bronze["catalog"],
-                    "source_database": raw_bronze["schema"],
-                    "source_table": raw_bronze["table"]
-                },
-                
-                # Bronze 설정
-                "bronze_catalog_dev": bronze["catalog"],
-                "bronze_database_dev": bronze["schema"],
-                "bronze_table": bronze["table"],
-                "bronze_table_comment": bronze.get("table_comment", ""),
-                "bronze_reader_options": bronze.get("reader_options", {}),
-                "bronze_partition_columns": ",".join(bronze.get("partition_columns", [])),
-                "bronze_table_properties": bronze.get("table_properties", {}),
-                "bronze_cluster_by": bronze.get("cluster_by", []),
-                
-                # Silver 설정
-                "silver_catalog_dev": silver["catalog"],
-                "silver_database_dev": silver["schema"],
-                "silver_table": silver["table"],
-                "silver_table_comment": silver.get("table_comment", ""),
-                "silver_cdc_apply_changes": silver.get("cdc_apply_changes", {}),
-                "silver_table_properties": silver.get("table_properties", {}),
-                "silver_cluster_by": silver.get("cluster_by", []),
-                
-                # Silver 변환 (별도 파일로 저장)
-                "silver_transformation_json_dev": f"generated/transformations_{dataflow_id}.json"
+        # Bronze dataflowspec (dlt-meta camelCase 표준)
+        bronze_spec = {
+            "dataFlowId": dataflow_id,
+            "dataFlowGroup": dataflow["dataflow_group"],
+            "sourceFormat": bronze["source_format"],
+            "sourceDetails": {
+                "source_catalog": raw_bronze["catalog"],
+                "source_database": raw_bronze["schema"],
+                "source_table": raw_bronze["table"]
+            },
+            "readerConfigOptions": bronze.get("reader_options", {}),
+            "targetFormat": "delta",  # dlt-meta 표준 필드
+            "targetDetails": {
+                "catalog": bronze["catalog"],
+                "database": bronze["schema"],
+                "table": bronze["table"],
+                "comment": bronze.get("table_comment", "")
+            },
+            "tableProperties": bronze.get("table_properties", {}),
+            "schema": None,  # Bronze schema (optional)
+            "partitionColumns": [],  # Liquid Clustering 사용 시 빈 리스트
+            "cdcApplyChanges": None,
+            "applyChangesFromSnapshot": None,
+            "dataQualityExpectations": None,
+            "quarantineTargetDetails": {},
+            "quarantineTableProperties": {},
+            "appendFlows": None,
+            "appendFlowsSchemas": {},
+            "clusterBy": bronze.get("cluster_by", []),
+            "sinks": None,
+            "version": "v1",
+            "createDate": datetime.now().isoformat(),
+            "createdBy": "dlt-meta-admin",
+            "updateDate": datetime.now().isoformat(),
+            "updatedBy": "dlt-meta-admin"
+        }
+        
+        # Silver dataflowspec (dlt-meta camelCase 표준)
+        silver_spec = {
+            "dataFlowId": dataflow_id,
+            "dataFlowGroup": dataflow["dataflow_group"],
+            "sourceFormat": "delta",
+            "sourceDetails": {
+                "catalog": bronze["catalog"],
+                "database": bronze["schema"],
+                "table": bronze["table"]
+            },
+            "readerConfigOptions": {},  # dlt-meta 표준 필드
+            "targetFormat": "delta",  # dlt-meta 표준 필드
+            "targetDetails": {
+                "catalog": silver["catalog"],
+                "database": silver["schema"],
+                "table": silver["table"],
+                "comment": silver.get("table_comment", "")
+            },
+            "tableProperties": silver.get("table_properties", {}),
+            "partitionColumns": [],  # Liquid Clustering 사용 시 빈 리스트
+            "clusterBy": silver.get("cluster_by", []),
+            "selectExp": silver["transformations"].get("select_expressions", []),
+            "whereClause": silver["transformations"].get("where_clauses", []),
+            "applyChangesFromSnapshot": None,
+            "quarantineTargetDetails": {},
+            "quarantineTableProperties": {},
+            "appendFlows": None,
+            "appendFlowsSchemas": {},
+            "sinks": None,
+            "version": "v1",
+            "createDate": datetime.now().isoformat(),
+            "createdBy": "dlt-meta-admin",
+            "updateDate": datetime.now().isoformat(),
+            "updatedBy": "dlt-meta-admin"
+        }
+        
+        # CDC Apply Changes (JSON String으로 변환)
+        cdc_config = silver.get("cdc_apply_changes")
+        if cdc_config:
+            silver_spec["cdcApplyChanges"] = json.dumps(cdc_config)
+        
+        # Data Quality Expectations 추가
+        data_quality = silver.get("data_quality", {})
+        expectations_list = data_quality.get("expectations", [])
+        if expectations_list:
+            dqe = {
+                "expect": {},
+                "expect_or_fail": {},
+                "expect_or_drop": {},
+                "expect_or_quarantine": {}
             }
-        ]
+            for exp in expectations_list:
+                exp_name = exp.get("name", "unnamed")
+                exp_constraint = exp.get("constraint", "true")
+                exp_action = exp.get("action", "warn").lower()
+                
+                if exp_action == "fail":
+                    dqe["expect_or_fail"][exp_name] = exp_constraint
+                elif exp_action == "drop":
+                    dqe["expect_or_drop"][exp_name] = exp_constraint
+                elif exp_action == "quarantine":
+                    dqe["expect_or_quarantine"][exp_name] = exp_constraint
+                else:
+                    dqe["expect"][exp_name] = exp_constraint
+            
+            # DQE를 JSON String으로 변환 (dlt-meta 표준)
+            dqe_filtered = {k: v for k, v in dqe.items() if v}
+            if dqe_filtered:
+                silver_spec["dataQualityExpectations"] = json.dumps(dqe_filtered)
+        
+        # 두 spec을 하나의 onboarding 파일로 저장 (호환성)
+        onboarding = [bronze_spec, silver_spec]
         
         # Onboarding JSON 저장
         output_file = self.output_dir / f"onboarding_{dataflow_id}.json"
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(onboarding, f, indent=2, ensure_ascii=False)
         
-        print(f"   ✅ Generated dlt-meta onboarding: {output_file.name}")
+        print(f"   ✅ Generated dlt-meta onboarding (camelCase standard): {output_file.name}")
+        print(f"      - Bronze spec with version: {bronze_spec['version']}")
+        print(f"      - Silver spec with version: {silver_spec['version']}")
+        if "dataQualityExpectations" in silver_spec and silver_spec["dataQualityExpectations"]:
+            # dataQualityExpectations는 JSON String이므로 파싱 후 카운트
+            try:
+                dqe_dict = json.loads(silver_spec["dataQualityExpectations"])
+                dqe_count = sum(len(v) for v in dqe_dict.values())
+                print(f"      - Data Quality Expectations: {dqe_count} rule(s)")
+            except (json.JSONDecodeError, AttributeError):
+                print(f"      - Data Quality Expectations: configured")
         
-        # Silver 변환 JSON 저장
-        transformations = [{
-            "target_table": silver["table"],
-            "select_exp": silver["transformations"].get("select_expressions", []),
-            "where_clause": silver["transformations"].get("where_clauses", [])
-        }]
-        
-        transform_file = self.output_dir / f"transformations_{dataflow_id}.json"
-        with open(transform_file, 'w', encoding='utf-8') as f:
-            json.dump(transformations, f, indent=2, ensure_ascii=False)
-        
-        print(f"   ✅ Generated silver transformations: {transform_file.name}")
+        # 참고: transformations와 DQE는 이제 silver_spec에 직접 포함됨
+        # 별도 파일 생성 불필요 (selectExp, whereClause, dataQualityExpectations)
         
         return onboarding
     
@@ -215,28 +287,22 @@ class UnifiedMetadataProcessor:
                 {
                     "task_key": "extract_from_rdb",
                     "notebook_task": {
-                        "notebook_path": "./notebooks/rdb_ingestion_runner",
+                        "notebook_path": "../notebooks/rdb_ingestion_runner.py",
                         "base_parameters": {
-                            "config_file": f"generated/rdb_ingestion_{dataflow_id}.json",
-                            "environment": self.environment
+                            "config_file": f"/Workspace/Users/${{workspace.current_user.userName}}/.bundle/gmarket_meta_pipeline/{self.environment}/files/generated/rdb_ingestion_{dataflow_id}.json",
+                            "environment": self.environment,
+                            "trigger_time": "{{job.start_time.iso_datetime}}"
                         }
                     },
                     "new_cluster": {
-                        "spark_version": "14.3.x-scala2.12",
+                        "spark_version": "17.3.x-scala2.13",
                         "node_type_id": "i3.xlarge",
-                        "num_workers": 2,
+                        "num_workers": 1,
                         "spark_conf": {
                             "spark.databricks.delta.optimizeWrite.enabled": "true",
                             "spark.databricks.delta.autoCompact.enabled": "true"
                         }
-                    },
-                    "libraries": [
-                        {
-                            "maven": {
-                                "coordinates": "com.microsoft.sqlserver:mssql-jdbc:12.4.0.jre11"
-                            }
-                        }
-                    ]
+                    }
                 }
             ]
         }
@@ -251,16 +317,11 @@ class UnifiedMetadataProcessor:
         dlt_pipeline = {
             "name": f"dlt_{dataflow_id}",
             "catalog": dataflow["bronze"]["catalog"],
-            "target": dataflow["bronze"]["schema"],
+            "schema": dataflow["bronze"]["schema"],
             "libraries": [
                 {
                     "notebook": {
-                        "path": "./notebooks/dlt_pipeline_runner"
-                    }
-                },
-                {
-                    "pypi": {
-                        "package": "dlt-meta>=0.0.10"
+                        "path": "../notebooks/dlt_pipeline_runner.py"
                     }
                 }
             ],
@@ -269,14 +330,16 @@ class UnifiedMetadataProcessor:
                 "bronze.group": dataflow["dataflow_group"],
                 "bronze.dataflowspecTable": f"{dataflow['bronze']['catalog']}.metadata.bronze_dataflowspec",
                 "silver.group": dataflow["dataflow_group"],
-                "silver.dataflowspecTable": f"{dataflow['silver']['catalog']}.metadata.silver_dataflowspec"
+                "silver.dataflowspecTable": f"{dataflow['silver']['catalog']}.metadata.silver_dataflowspec",
+                "pipeline.requirements_txt": "/Workspace/Users/${workspace.current_user.userName}/.bundle/gmarket_meta_pipeline/dev/files/requirements.txt"
             },
-            "clusters": [
-                {
-                    "label": "default",
-                    "num_workers": 2
-                }
-            ],
+            # "clusters": [
+            #     {
+            #         "label": "default",
+            #         "num_workers": 2
+            #     }
+            # ],
+            "serverless": True,  # Use serverless compute
             "continuous": False,
             "development": self.environment == "dev"
         }
@@ -329,10 +392,9 @@ CREATE TABLE IF NOT EXISTS {catalog}.metadata.pipeline_execution_history (
   rows_processed BIGINT COMMENT 'Number of rows processed',
   error_message STRING COMMENT 'Error message if failed',
   metadata MAP<STRING, STRING> COMMENT 'Additional metadata',
-  created_at TIMESTAMP NOT NULL DEFAULT current_timestamp()
+  created_at TIMESTAMP NOT NULL COMMENT 'Record creation timestamp'
 )
 USING DELTA
-PARTITIONED BY (DATE(start_time))
 COMMENT 'Pipeline execution history and monitoring';
 
 -- 데이터 계보 (Lineage) 테이블
@@ -344,8 +406,8 @@ CREATE TABLE IF NOT EXISTS {catalog}.metadata.data_lineage (
   target_table STRING NOT NULL COMMENT 'Fully qualified target table name',
   transformation_logic STRING COMMENT 'Transformation logic applied',
   execution_id STRING COMMENT 'Reference to pipeline_execution_history',
-  created_at TIMESTAMP NOT NULL DEFAULT current_timestamp(),
-  updated_at TIMESTAMP NOT NULL DEFAULT current_timestamp()
+  created_at TIMESTAMP NOT NULL COMMENT 'Record creation timestamp',
+  updated_at TIMESTAMP NOT NULL COMMENT 'Last update timestamp'
 )
 USING DELTA
 COMMENT 'Data lineage tracking';
@@ -357,28 +419,16 @@ CREATE TABLE IF NOT EXISTS {catalog}.metadata.metadata_versions (
   metadata_content STRING NOT NULL COMMENT 'Full metadata YAML/JSON content',
   change_description STRING COMMENT 'Description of changes',
   created_by STRING NOT NULL COMMENT 'User who created this version',
-  created_at TIMESTAMP NOT NULL DEFAULT current_timestamp(),
-  is_active BOOLEAN DEFAULT true COMMENT 'Is this the active version'
+  created_at TIMESTAMP NOT NULL COMMENT 'Record creation timestamp',
+  is_active BOOLEAN COMMENT 'Is this the active version'
 )
 USING DELTA
 COMMENT 'Metadata version control';
 
--- 샘플 데이터 삽입 (현재 메타데이터)
-INSERT INTO {catalog}.metadata.metadata_versions (
-  version_id,
-  dataflow_id,
-  metadata_content,
-  change_description,
-  created_by,
-  is_active
-) VALUES (
-  uuid(),
-  '{dataflow_id}',
-  '--- Metadata would be stored here ---',
-  'Initial metadata version',
-  current_user(),
-  true
-);
+-- 샘플 데이터 삽입은 애플리케이션 코드에서 수행
+-- (uuid(), current_user() 등의 함수는 VALUES 절에서 사용 불가)
+-- INSERT INTO {catalog}.metadata.metadata_versions ...
+-- 필요시 Spark/Python에서 직접 삽입
 
 -- 뷰 생성: 최신 실행 상태
 CREATE OR REPLACE VIEW {catalog}.metadata.v_latest_pipeline_status AS
