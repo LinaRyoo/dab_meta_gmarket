@@ -16,7 +16,6 @@ from pyspark.sql.types import *
 import random
 import uuid
 
-# Spark Session은 Databricks에서 자동 제공됨 (spark 변수)
 
 def create_schemas(spark, catalog="baikald1ws"):
     """필요한 스키마 생성"""
@@ -339,6 +338,122 @@ def create_raw_bronze_mock_data(spark, catalog="baikald1ws", days=7, records_per
     df.groupBy("ingest_dt").count().orderBy("ingest_dt", ascending=False).show()
 
 
+def append_bad_data_for_expectations(spark, catalog="baikald1ws", bad_records_count=5):
+    """
+    Expectation 테스트를 위한 비정상 데이터 추가 (append 모드)
+    
+    생성되는 비정상 데이터:
+    1. expect 위반 (Warning): OPT_GD_NO IS NULL
+    2. expect_or_fail 위반 (Critical): OPT_NO IS NULL → Quarantine 테이블로 이동
+    """
+    
+    print(f"\n⚠️  Appending Bad Data for Expectation Testing...")
+    print(f"   Bad records count: {bad_records_count}")
+    
+    table_name = f"{catalog}.sdp_poc.item_goods_option_rdb_raw"
+    
+    # 기존 테이블이 있으면 스키마를 읽어옴
+    try:
+        existing_df = spark.table(table_name).limit(0)
+        schema = existing_df.schema
+        print(f"   ℹ️  Using existing table schema from {table_name}")
+        print(f"   📋 Schema has {len(schema.fields)} fields")
+    except Exception as e:
+        print(f"\n   ❌ Table {table_name} not found!")
+        print(f"   📝 Please run one of these commands first:")
+        print(f"      - databricks bundle run create_mock_data --target dev")
+        print(f"      - python3 scripts/create_mock_data.py --catalog {catalog}")
+        raise Exception(f"Prerequisite failed: Table {table_name} must exist before appending bad data.")
+    
+    bad_data = []
+    base_date = datetime.now()
+    
+    for idx in range(bad_records_count):
+        # 50%는 expect 위반 (OPT_GD_NO NULL), 50%는 expect_or_fail 위반 (OPT_NO NULL)
+        if idx % 2 == 0:
+            # Type 1: expect 위반 - OPT_GD_NO IS NULL (Warning)
+            record_type = "EXPECT_VIOLATION"
+            opt_no = 9990000 + idx
+            opt_gd_no = None  # 👈 OPT_GD_NO IS NULL
+        else:
+            # Type 2: expect_or_fail 위반 - OPT_NO IS NULL (Critical, Quarantine로)
+            record_type = "EXPECT_OR_FAIL_VIOLATION"
+            opt_no = None  # 👈 OPT_NO IS NULL
+            opt_gd_no = 9995000 + idx
+        
+        record = {
+            # 기본 상품 옵션 정보
+            "OPT_NO": opt_no,
+            "OPT_GD_NO": opt_gd_no,
+            "INFO_TYPE": "99",
+            "DISP_TYPE": "X",
+            "OPT_NM": f"BAD_DATA_{idx}_{record_type}",
+            "OPT_VALUE": f"비정상데이터_{idx}",
+            "SORT_ORDER": 999,
+            "OPT_PRICE": -1,  # 비정상 가격
+            "INVENTORY_CNT": -1,  # 비정상 재고
+            "VERSION_CHG_DT": base_date,
+            "REG_ID": "test_bad_data",
+            "REG_DT": base_date - timedelta(days=1),
+            "CHG_ID": "test_bad_data",
+            "CHG_DT": base_date,
+            "FTBL": "TEST",
+            "FKEY": "BAD",
+            "FTYPE": "TEST",
+            "CHANGED": "Y",
+            "OPT_STAT": "99",
+            "OPT_NM_SORT_ORDER": 999,
+            "OPT_VALUE_2": f"BAD_{idx}",
+            "USE_YN": "Y",
+            "REP_IMAGE_URL": None,
+            "OPT_MASTER_SEQ": 999,
+            "SELLER_MANAGE_VALUE": f"BAD_SKU_{idx}",
+            "SKU_MATCHING_VER_NO": 1,
+            "ENG_OPT_NM": f"BadData_{idx}",
+            "ENG_OPT_VALUE": f"Bad_{idx}",
+            "ENG_OPT_VALUE_2": None,
+            "SINGLE_OPT_SEQ": 999,
+            "STOCK_ID": None,
+            
+            # CDC 정보
+            "SYNC_ID": 99990000 + idx,
+            "S_OPT_NO": opt_no if opt_no else (9995000 + idx),
+            "OPERATION_TYPE": "I",
+            "INS_DATE": base_date,
+            "INS_OPRT": "bad_data_test",
+            
+            # 메타데이터 컬럼
+            "ingest_dt": base_date.replace(hour=0, minute=0, second=0, microsecond=0),
+            "_source_system": "test_system",
+            "_ingestion_timestamp": base_date,
+            "_dataflow_id": "item_goods_option"
+        }
+        
+        bad_data.append(record)
+    
+    # DataFrame 생성 (기존 테이블 스키마 사용)
+    bad_df = spark.createDataFrame(bad_data, schema=schema)
+    
+    # Raw Bronze 테이블에 APPEND
+    bad_df.write.mode("append").partitionBy("ingest_dt").saveAsTable(table_name)
+    
+    print(f"✅ Bad data appended: {bad_df.count()} record(s)")
+    print(f"   Table: {table_name}")
+    
+    # 통계 출력
+    print("\n⚠️  Bad Data Statistics:")
+    print("   Type 1 (expect 위반): OPT_GD_NO IS NULL → Warning, 데이터는 통과")
+    print("   Type 2 (expect_or_fail 위반): OPT_NO IS NULL → Critical, Quarantine로 이동")
+    bad_df.groupBy(
+        F.when(F.col("OPT_NO").isNull(), "OPT_NO_NULL (Quarantine)")
+         .when(F.col("OPT_GD_NO").isNull(), "OPT_GD_NO_NULL (Warning)")
+         .otherwise("Normal")
+         .alias("violation_type")
+    ).count().show(truncate=False)
+    
+    return bad_df
+
+
 def main():
     parser = argparse.ArgumentParser(description="Create mock data for DLT pipeline testing")
     parser.add_argument("--catalog", default="baikald1ws", help="Unity Catalog name")
@@ -346,6 +461,8 @@ def main():
     parser.add_argument("--records-per-day", type=int, default=10, help="Records per day")
     parser.add_argument("--skip-metadata", action="store_true", help="Skip metadata table creation")
     parser.add_argument("--skip-raw-data", action="store_true", help="Skip raw data creation")
+    parser.add_argument("--append-bad-data", action="store_true", help="Append bad data for expectation testing")
+    parser.add_argument("--bad-records", type=int, default=10, help="Number of bad records to append")
     
     args = parser.parse_args()
     
@@ -375,6 +492,14 @@ def main():
             args.records_per_day
         )
     
+    # Bad Data 추가 (선택사항)
+    if args.append_bad_data:
+        append_bad_data_for_expectations(
+            spark,
+            args.catalog,
+            args.bad_records
+        )
+    
     print("\n" + "="*70)
     print("✅ Mock Data Generation Complete!")
     print("="*70)
@@ -384,8 +509,23 @@ def main():
     print(f"   SELECT * FROM {args.catalog}.metadata.silver_dataflowspec;")
     print("\n2. Verify raw data:")
     print(f"   SELECT * FROM {args.catalog}.sdp_poc.item_goods_option_rdb_raw LIMIT 10;")
-    print("\n3. Run DLT pipeline:")
+    
+    if args.append_bad_data:
+        print("\n3. Verify bad data (expectation violations):")
+        print(f"   SELECT * FROM {args.catalog}.sdp_poc.item_goods_option_rdb_raw WHERE OPT_NM LIKE 'BAD_DATA%';")
+        print(f"   -- OPT_NO IS NULL 레코드는 Quarantine 테이블로 이동됩니다")
+        print(f"   -- OPT_GD_NO IS NULL 레코드는 Warning으로 기록되지만 통과됩니다")
+    
+    print("\n4. Run DLT pipeline:")
     print("   databricks bundle run dlt_item_goods_option --target dev")
+    
+    if args.append_bad_data:
+        print("\n5. Check quarantine table (expect_or_fail violations):")
+        print(f"   SELECT * FROM {args.catalog}.sdp_poc.item_goods_option_silver_quarantine;")
+        print("\n6. Check event log (expect violations):")
+        print(f"   SELECT * FROM event_log('{args.catalog}.sdp_poc.item_goods_option_silver')")
+        print(f"   WHERE details:flow_progress:data_quality:expectations IS NOT NULL;")
+    
     print("="*70)
 
 

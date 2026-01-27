@@ -425,6 +425,21 @@ CREATE TABLE IF NOT EXISTS {catalog}.metadata.metadata_versions (
 USING DELTA
 COMMENT 'Metadata version control';
 
+-- 모니터링 이력 테이블
+CREATE TABLE IF NOT EXISTS {catalog}.metadata.monitoring_history (
+  monitoring_timestamp TIMESTAMP NOT NULL COMMENT 'Monitoring execution time',
+  monitoring_date DATE NOT NULL COMMENT 'Monitoring execution date for partitioning',
+  monitoring_window_hours INT COMMENT 'Time window for monitoring (hours)',
+  alert_count INT COMMENT 'Total number of alerts',
+  critical_count INT COMMENT 'Number of critical alerts',
+  warning_count INT COMMENT 'Number of warning alerts',
+  alerts_json STRING COMMENT 'Full alerts data in JSON format',
+  created_at TIMESTAMP COMMENT 'Record creation timestamp'
+)
+USING DELTA
+PARTITIONED BY (monitoring_date)
+COMMENT 'Pipeline monitoring execution history';
+
 -- 샘플 데이터 삽입은 애플리케이션 코드에서 수행
 -- (uuid(), current_user() 등의 함수는 VALUES 절에서 사용 불가)
 -- INSERT INTO {catalog}.metadata.metadata_versions ...

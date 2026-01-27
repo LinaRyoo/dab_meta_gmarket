@@ -1,0 +1,261 @@
+{
+  "description": "Slack 알림 메시지 예시 - pipeline_monitor.py에서 실제로 전송되는 포맷",
+  "examples": [
+    {
+      "alert_type": "Pipeline Failure",
+      "severity": "critical",
+      "slack_message": {
+        "text": "🔴 *파이프라인 실패: item_goods_option (silver)*",
+        "attachments": [
+          {
+            "color": "#FF0000",
+            "fields": [
+              {
+                "title": "Alert Type",
+                "value": "Pipeline Failure",
+                "short": true
+              },
+              {
+                "title": "Severity",
+                "value": "CRITICAL",
+                "short": true
+              },
+              {
+                "title": "Message",
+                "value": "파이프라인이 실패했습니다.",
+                "short": false
+              },
+              {
+                "title": "Timestamp",
+                "value": "2026-01-27T12:30:45",
+                "short": true
+              },
+              {
+                "title": "Details",
+                "value": "• *Dataflow ID*: item_goods_option\n• *Stage*: silver\n• *Error*: org.apache.spark.sql.catalyst.ExtendedAnalysisException: UNRESOLVED_COLUMN\n• *Timestamp*: 2026-01-27 12:30:00\n• *Duration (sec)*: 120",
+                "short": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "alert_type": "Data Quality Anomaly",
+      "severity": "warning",
+      "slack_message": {
+        "text": "🟡 *데이터 이상치: item_goods_option (silver) - 급감*",
+        "attachments": [
+          {
+            "color": "#FFA500",
+            "fields": [
+              {
+                "title": "Alert Type",
+                "value": "Data Quality Anomaly",
+                "short": true
+              },
+              {
+                "title": "Severity",
+                "value": "WARNING",
+                "short": true
+              },
+              {
+                "title": "Message",
+                "value": "처리된 레코드 수가 평균 대비 비정상적으로 급감했습니다.",
+                "short": false
+              },
+              {
+                "title": "Timestamp",
+                "value": "2026-01-27T12:30:45",
+                "short": true
+              },
+              {
+                "title": "Details",
+                "value": "• *Dataflow ID*: item_goods_option\n• *Stage*: silver\n• *Latest Rows*: 10,000\n• *Historical Average*: 50,000\n• *Z-Score*: -4.2\n• *Deviation*: -80.0%\n• *Sample Size*: 30\n• *Timestamp*: 2026-01-27 12:00:00",
+                "short": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "alert_type": "SLA Violation",
+      "severity": "warning",
+      "slack_message": {
+        "text": "🟡 *SLA 초과: item_goods_option (bronze)*",
+        "attachments": [
+          {
+            "color": "#FFA500",
+            "fields": [
+              {
+                "title": "Alert Type",
+                "value": "SLA Violation",
+                "short": true
+              },
+              {
+                "title": "Severity",
+                "value": "WARNING",
+                "short": true
+              },
+              {
+                "title": "Message",
+                "value": "파이프라인 실행 시간이 SLA를 초과했습니다.",
+                "short": false
+              },
+              {
+                "title": "Timestamp",
+                "value": "2026-01-27T12:30:45",
+                "short": true
+              },
+              {
+                "title": "Details",
+                "value": "• *Dataflow ID*: item_goods_option\n• *Stage*: bronze\n• *Duration*: 15.5 minutes\n• *SLA Limit*: 10.0 minutes\n• *Exceeded By*: 5.5 minutes\n• *Rows Processed*: 100,000\n• *Start Time*: 2026-01-27 12:00:00\n• *End Time*: 2026-01-27 12:15:30",
+                "short": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "alert_type": "Low Success Rate",
+      "severity": "critical",
+      "slack_message": {
+        "text": "🔴 *낮은 성공률: item_goods_option (silver) - 45.0%*",
+        "attachments": [
+          {
+            "color": "#FF0000",
+            "fields": [
+              {
+                "title": "Alert Type",
+                "value": "Low Success Rate",
+                "short": true
+              },
+              {
+                "title": "Severity",
+                "value": "CRITICAL",
+                "short": true
+              },
+              {
+                "title": "Message",
+                "value": "최근 24시간 동안 파이프라인 성공률이 45.0%로 낮습니다.",
+                "short": false
+              },
+              {
+                "title": "Timestamp",
+                "value": "2026-01-27T12:30:45",
+                "short": true
+              },
+              {
+                "title": "Details",
+                "value": "• *Dataflow ID*: item_goods_option\n• *Stage*: silver\n• *Success Rate*: 45.0%\n• *Total Runs*: 20\n• *Success Count*: 9\n• *Failed Count*: 11",
+                "short": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "alert_type": "Data Freshness",
+      "severity": "warning",
+      "slack_message": {
+        "text": "🟡 *데이터 지연: item_goods_option (bronze)*",
+        "attachments": [
+          {
+            "color": "#FFA500",
+            "fields": [
+              {
+                "title": "Alert Type",
+                "value": "Data Freshness",
+                "short": true
+              },
+              {
+                "title": "Severity",
+                "value": "WARNING",
+                "short": true
+              },
+              {
+                "title": "Message",
+                "value": "파이프라인이 3시간 동안 실행되지 않았습니다.",
+                "short": false
+              },
+              {
+                "title": "Timestamp",
+                "value": "2026-01-27T12:30:45",
+                "short": true
+              },
+              {
+                "title": "Details",
+                "value": "• *Dataflow ID*: item_goods_option\n• *Stage*: bronze\n• *Last Run*: 2026-01-27 09:00:00\n• *Hours Since Last Run*: 3",
+                "short": false
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "testing": {
+    "description": "Slack 알림 테스트 방법",
+    "curl_example": {
+      "command": "curl -X POST YOUR_SLACK_WEBHOOK_URL -H 'Content-Type: application/json' -d @slack_test_message.json",
+      "test_message": {
+        "text": "🧪 *테스트 알림*",
+        "attachments": [
+          {
+            "color": "#0000FF",
+            "fields": [
+              {
+                "title": "Test",
+                "value": "Slack 알림이 정상 작동합니다!",
+                "short": false
+              },
+              {
+                "title": "Timestamp",
+                "value": "2026-01-27T12:00:00",
+                "short": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "databricks_test": {
+      "description": "Databricks 노트북에서 테스트",
+      "code": "import requests\n\nwebhook_url = dbutils.secrets.get('pipeline-cred-baikalx', 'slack_webhook_url')\n\ntest_message = {\n    'text': '🧪 테스트 알림',\n    'attachments': [{\n        'color': '#0000FF',\n        'fields': [{\n            'title': 'Test',\n            'value': 'Slack 알림이 정상 작동합니다!',\n            'short': False\n        }]\n    }]\n}\n\nresponse = requests.post(webhook_url, json=test_message)\nprint(f'Status: {response.status_code}')\nprint(f'Response: {response.text}')"
+    }
+  },
+  "customization": {
+    "description": "알림 메시지 커스터마이징",
+    "tips": [
+      "emoji_map과 color_map을 수정하여 알림 스타일 변경",
+      "fields 배열에 원하는 정보 추가",
+      "attachments에 actions 추가하여 인터랙티브 버튼 생성",
+      "Slack Block Kit을 사용하여 더 풍부한 UI 구성"
+    ],
+    "slack_block_kit_url": "https://api.slack.com/block-kit",
+    "example_with_button": {
+      "text": "🔴 *파이프라인 실패*",
+      "attachments": [
+        {
+          "color": "#FF0000",
+          "text": "item_goods_option (silver) 파이프라인이 실패했습니다.",
+          "actions": [
+            {
+              "type": "button",
+              "text": "View Logs",
+              "url": "https://your-databricks-workspace.com/jobs/12345"
+            },
+            {
+              "type": "button",
+              "text": "Retry",
+              "url": "https://your-databricks-workspace.com/jobs/12345/run"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

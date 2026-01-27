@@ -95,7 +95,7 @@ resources:
     
     # Mock 데이터 생성 Job (테스트용)
     create_mock_data:
-      name: "create_mock_data"
+      name: "[${var.environment}] create_mock_data"
       tasks:
         - task_key: generate_mock_data
           job_cluster_key: "mock_data_cluster"
@@ -121,6 +121,68 @@ resources:
         project: "dlt-meta-unified"
         stage: "setup"
         purpose: "testing"
+    
+    # Bad Data 추가 Job (Expectation 테스트용)
+    append_bad_data:
+      name: "[${var.environment}] append_bad_data"
+      tasks:
+        - task_key: append_bad_records
+          job_cluster_key: "mock_data_cluster"
+          spark_python_task:
+            python_file: ./scripts/create_mock_data.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--skip-metadata"
+              - "--skip-raw-data"
+              - "--append-bad-data"
+              - "--bad-records"
+              - "10"
+      
+      job_clusters:
+        - job_cluster_key: "mock_data_cluster"
+          new_cluster:
+            spark_version: "17.3.x-scala2.13"
+            node_type_id: "i3.xlarge"
+            num_workers: 1
+      
+      max_concurrent_runs: 1
+      tags:
+        project: "dlt-meta-unified"
+        stage: "testing"
+        purpose: "data-quality-testing"
+    
+    # Mock Data + Bad Data 한번에 생성 Job
+    create_mock_data_with_bad_records:
+      name: "[${var.environment}] create_mock_data_with_bad_records"
+      tasks:
+        - task_key: generate_all_mock_data
+          job_cluster_key: "mock_data_cluster"
+          spark_python_task:
+            python_file: ./scripts/create_mock_data.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--days"
+              - "7"
+              - "--records-per-day"
+              - "10"
+              - "--append-bad-data"
+              - "--bad-records"
+              - "10"
+      
+      job_clusters:
+        - job_cluster_key: "mock_data_cluster"
+          new_cluster:
+            spark_version: "17.3.x-scala2.13"
+            node_type_id: "i3.xlarge"
+            num_workers: 1
+      
+      max_concurrent_runs: 1
+      tags:
+        project: "dlt-meta-unified"
+        stage: "testing"
+        purpose: "full-testing-setup"
     
     # 전체 파이프라인 Orchestrator (실제 RDB 연동)
     orchestrator_full_pipeline:
@@ -158,16 +220,16 @@ resources:
       job_clusters:
         - job_cluster_key: "ingestion_cluster"
           new_cluster:
-            spark_version: "14.3.x-scala2.12"
+            spark_version: "17.3.x-scala2.13"
             node_type_id: "i3.xlarge"
-            num_workers: 2
+            num_workers: 1
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
               spark.databricks.delta.autoCompact.enabled: "true"
         
         - job_cluster_key: "validation_cluster"
           new_cluster:
-            spark_version: "14.3.x-scala2.12"
+            spark_version: "17.3.x-scala2.13"
             node_type_id: "i3.xlarge"
             num_workers: 1
       
@@ -242,6 +304,52 @@ resources:
         environment: "${var.environment}"
         purpose: "testing"
 
+    # 모니터링 Job (주기적 실행)
+    pipeline_monitoring:
+      name: "[${bundle.target}] pipeline_monitoring"
+      
+      tasks:
+        - task_key: monitor_pipelines
+          job_cluster_key: "monitoring_cluster"
+          notebook_task:
+            notebook_path: ./notebooks/pipeline_monitor.py
+            base_parameters:
+              catalog: "${var.catalog_name}"
+              monitoring_window_hours: "1"
+              # Slack Webhook URL은 Databricks Secret으로 관리 권장
+              # slack_webhook_url: "{{secrets/pipeline-cred-baikalx/slack_webhook}}"
+              # email_recipients: "data-team@company.com,ops-team@company.com"
+              alert_level: "all"
+          libraries:
+            - pypi:
+                package: "requests"
+      
+      job_clusters:
+        - job_cluster_key: "monitoring_cluster"
+          new_cluster:
+            spark_version: "17.3.x-scala2.13"
+            node_type_id: "i3.xlarge"
+            num_workers: 1
+            spark_conf:
+              spark.databricks.delta.preview.enabled: "true"
+      
+      # 1시간마다 실행
+      schedule:
+        quartz_cron_expression: "0 0 * * * ?"  # 매시간 정각
+        timezone_id: "Asia/Seoul"
+        pause_status: PAUSED
+      
+      max_concurrent_runs: 1
+      
+      # email_notifications:
+      #   on_failure:
+      #     - "lina.ryoo@databricks.com"
+      
+      tags:
+        project: "dlt-meta-unified"
+        environment: "${var.environment}"
+        purpose: "monitoring"
+
   # DLT Pipeline 리소스는 generated/dabs_*.yml에서 자동 생성됨
   # (위의 include 섹션 참조)
 
@@ -251,6 +359,8 @@ workspace:
 permissions:
   # 현재 배포 사용자
   - user_name: lina.ryoo@databricks.com
+    level: CAN_MANAGE
+  - user_name: hongguen.park@databricks.com
     level: CAN_MANAGE
   
   # - level: CAN_MANAGE
