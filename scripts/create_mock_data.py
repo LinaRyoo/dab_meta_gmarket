@@ -50,14 +50,14 @@ def create_bronze_dataflowspec(spark, catalog="baikald1ws"):
         "sourceDetails": {
             "source_catalog": catalog,
             "source_database": "sdp_poc",
-            "source_table": "item_goods_option_rdb_raw"
+            "source_table": "dab_item_goods_option_rdb_raw"
         },
         "readerConfigOptions": {},
         "targetFormat": "delta",  # dlt-meta 표준 필드
         "targetDetails": {
             "catalog": catalog,
             "database": "sdp_poc",
-            "table": "item_goods_option_bronze",
+            "table": "dab_item_goods_option_bronze",
             "comment": "상품 옵션 정보 Bronze 테이블"
         },
         "tableProperties": {
@@ -154,14 +154,14 @@ def create_silver_dataflowspec(spark, catalog="baikald1ws"):
         "sourceDetails": {
             "catalog": catalog,
             "database": "sdp_poc",
-            "table": "item_goods_option_bronze"
+            "table": "dab_item_goods_option_bronze"
         },
         "readerConfigOptions": {},  # dlt-meta 표준 필드
         "targetFormat": "delta",  # dlt-meta 표준 필드
         "targetDetails": {
             "catalog": catalog,
             "database": "sdp_poc",
-            "table": "item_goods_option_silver",
+            "table": "dab_item_goods_option_silver",
             "comment": "상품 옵션 정보 Silver 테이블 (SCD Type 1)"
         },
         "cdcApplyChanges": json.dumps({

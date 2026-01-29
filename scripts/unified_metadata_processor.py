@@ -333,13 +333,20 @@ class UnifiedMetadataProcessor:
                 "silver.dataflowspecTable": f"{dataflow['silver']['catalog']}.metadata.silver_dataflowspec",
                 "pipeline.requirements_txt": "/Workspace/Users/${workspace.current_user.userName}/.bundle/gmarket_meta_pipeline/dev/files/requirements.txt"
             },
-            # "clusters": [
-            #     {
-            #         "label": "default",
-            #         "num_workers": 2
-            #     }
-            # ],
-            "serverless": True,  # Use serverless compute
+            "clusters": [
+                {
+                    "label": "default",
+                    "node_type_id": "Standard_D8ds_v5",         
+                    "num_workers": 1,
+                    "policy_id": "001D2D42E8D56DBD",
+                    "spark_conf": {
+                        "spark.databricks.delta.optimizeWrite.enabled": "true",
+                        "spark.databricks.delta.autoCompact.enabled": "true",
+                    }
+                }
+            ],
+            
+            # "serverless": True,  # Use serverless compute
             "continuous": False,
             "development": self.environment == "dev"
         }

@@ -78,21 +78,28 @@ targets:
 # 공통 리소스
 resources:
   jobs:
-    # # 메타데이터 초기화 Job
-    # serverless or pro 만 가능 --> 현재 classic 밖에 없으므로 수동으로 실행
-    # setup_metadata:
-    #   name: "setup_metadata_tables"
-    #   tasks:
-    #     - task_key: create_metadata_schemas
-    #       sql_task:
-    #         file:
-    #           path: ./generated/metadata_ddl_item_goods_option.sql
-    #         warehouse_id: "${var.warehouse_id}" # serverless or pro 만 가능
-      
-    #   max_concurrent_runs: 1
-    #   tags:
-    #     project: "dlt-meta-unified"
-    #     stage: "setup"
+    # 메타데이터 초기화 Job
+    setup_metadata:
+      name: "setup_metadata_tables"
+      tasks:
+        - task_key: create_metadata_schemas
+          job_cluster_key: "setup_cluster"
+          notebook_task:
+            notebook_path: ./notebooks/setup_metadata.py
+            base_parameters:
+              sql_file_path: "${workspace.root_path}/files/generated/metadata_ddl_item_goods_option.sql"
+              catalog: "${var.catalog_name}"
+      job_clusters:
+        - job_cluster_key: "setup_cluster"
+          new_cluster:
+            spark_version: "17.3.x-scala2.13"
+            node_type_id: "Standard_D8ds_v5"
+            num_workers: 1   
+
+      max_concurrent_runs: 1
+      tags:
+        project: "dlt-meta-unified"
+        stage: "setup"
     
     # Mock 데이터 생성 Job (테스트용)
     create_mock_data:
@@ -152,38 +159,6 @@ resources:
         project: "dlt-meta-unified"
         stage: "testing"
         purpose: "data-quality-testing"
-    
-    # Mock Data + Bad Data 한번에 생성 Job
-    create_mock_data_with_bad_records:
-      name: "[${var.environment}] create_mock_data_with_bad_records"
-      tasks:
-        - task_key: generate_all_mock_data
-          job_cluster_key: "mock_data_cluster"
-          spark_python_task:
-            python_file: ./scripts/create_mock_data.py
-            parameters:
-              - "--catalog"
-              - "${var.catalog_name}"
-              - "--days"
-              - "7"
-              - "--records-per-day"
-              - "10"
-              - "--append-bad-data"
-              - "--bad-records"
-              - "10"
-      
-      job_clusters:
-        - job_cluster_key: "mock_data_cluster"
-          new_cluster:
-            spark_version: "17.3.x-scala2.13"
-            node_type_id: "Standard_D8ds_v5"
-            num_workers: 1
-      
-      max_concurrent_runs: 1
-      tags:
-        project: "dlt-meta-unified"
-        stage: "testing"
-        purpose: "full-testing-setup"
     
     # 전체 파이프라인 Orchestrator (실제 RDB 연동)
     orchestrator_full_pipeline:
