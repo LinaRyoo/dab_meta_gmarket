@@ -46,7 +46,7 @@ variables:
   # SQL Warehouse ID
   warehouse_id:
     description: "SQL Warehouse ID for metadata operations"
-    default: "4b9b953939869799"  # 실제 warehouse ID로 교체
+    default: "8a389507a5bf8eb6"  # 실제 warehouse ID로 교체
   
   # Environment
   environment:
@@ -61,7 +61,7 @@ targets:
       catalog_name: "baikald1ws"
       environment: "dev"
     workspace:
-      host: "https://e2-demo-field-eng.cloud.databricks.com/"
+      host: "https://adb-5971940266401983.3.azuredatabricks.net/"
   
   prod:
     mode: production
@@ -69,7 +69,7 @@ targets:
       catalog_name: "baikald1ws"
       environment: "prod"
     workspace:
-      host: "https://e2-demo-field-eng.cloud.databricks.com/"
+      host: "https://adb-5971940266401983.3.azuredatabricks.net/"
     
     # Production 배포 시 승인 필요
     run_as:
@@ -78,20 +78,21 @@ targets:
 # 공통 리소스
 resources:
   jobs:
-    # 메타데이터 초기화 Job
-    setup_metadata:
-      name: "setup_metadata_tables"
-      tasks:
-        - task_key: create_metadata_schemas
-          sql_task:
-            file:
-              path: ./generated/metadata_ddl_item_goods_option.sql
-            warehouse_id: "${var.warehouse_id}"
+    # # 메타데이터 초기화 Job
+    # serverless or pro 만 가능 --> 현재 classic 밖에 없으므로 수동으로 실행
+    # setup_metadata:
+    #   name: "setup_metadata_tables"
+    #   tasks:
+    #     - task_key: create_metadata_schemas
+    #       sql_task:
+    #         file:
+    #           path: ./generated/metadata_ddl_item_goods_option.sql
+    #         warehouse_id: "${var.warehouse_id}" # serverless or pro 만 가능
       
-      max_concurrent_runs: 1
-      tags:
-        project: "dlt-meta-unified"
-        stage: "setup"
+    #   max_concurrent_runs: 1
+    #   tags:
+    #     project: "dlt-meta-unified"
+    #     stage: "setup"
     
     # Mock 데이터 생성 Job (테스트용)
     create_mock_data:
@@ -113,7 +114,7 @@ resources:
         - job_cluster_key: "mock_data_cluster"
           new_cluster:
             spark_version: "17.3.x-scala2.13"
-            node_type_id: "i3.xlarge"
+            node_type_id: "Standard_D8ds_v5"
             num_workers: 1  
       
       max_concurrent_runs: 1
@@ -143,7 +144,7 @@ resources:
         - job_cluster_key: "mock_data_cluster"
           new_cluster:
             spark_version: "17.3.x-scala2.13"
-            node_type_id: "i3.xlarge"
+            node_type_id: "Standard_D8ds_v5"
             num_workers: 1
       
       max_concurrent_runs: 1
@@ -175,7 +176,7 @@ resources:
         - job_cluster_key: "mock_data_cluster"
           new_cluster:
             spark_version: "17.3.x-scala2.13"
-            node_type_id: "i3.xlarge"
+            node_type_id: "Standard_D8ds_v5"
             num_workers: 1
       
       max_concurrent_runs: 1
@@ -221,7 +222,7 @@ resources:
         - job_cluster_key: "ingestion_cluster"
           new_cluster:
             spark_version: "17.3.x-scala2.13"
-            node_type_id: "i3.xlarge"
+            node_type_id: "Standard_D8ds_v5"
             num_workers: 1
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
@@ -230,7 +231,7 @@ resources:
         - job_cluster_key: "validation_cluster"
           new_cluster:
             spark_version: "17.3.x-scala2.13"
-            node_type_id: "i3.xlarge"
+            node_type_id: "Standard_D8ds_v5"
             num_workers: 1
       
       # 스케줄 (환경별로 다르게 설정 가능)
@@ -290,7 +291,7 @@ resources:
         - job_cluster_key: "test_cluster"
           new_cluster:
             spark_version: "17.3.x-scala2.13"
-            node_type_id: "i3.xlarge"
+            node_type_id: "Standard_D8ds_v5"
             num_workers: 1
             spark_conf:
               spark.databricks.delta.optimizeWrite.enabled: "true"
@@ -328,7 +329,7 @@ resources:
         - job_cluster_key: "monitoring_cluster"
           new_cluster:
             spark_version: "17.3.x-scala2.13"
-            node_type_id: "i3.xlarge"
+            node_type_id: "Standard_D8ds_v5"
             num_workers: 1
             spark_conf:
               spark.databricks.delta.preview.enabled: "true"
@@ -358,13 +359,9 @@ workspace:
 
 permissions:
   # 현재 배포 사용자
-  - user_name: lina.ryoo@databricks.com
+  - user_name: data2440@gepplus.net
     level: CAN_MANAGE
-  - user_name: hongguen.park@databricks.com
+  - user_name: data2441@gepplus.net
     level: CAN_MANAGE
-  
-  # - level: CAN_MANAGE
-  #   group_name: "data_platform_engineers"
-  
-  # - level: CAN_RUN
-  #   service_principal_name: "123456-abcdef"
+  - group_name: "users"
+    level: CAN_MANAGE

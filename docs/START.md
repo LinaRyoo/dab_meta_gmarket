@@ -11,7 +11,7 @@
 - ✅ Databricks Workspace 접근 권한
 - ✅ Unity Catalog 생성 완료 (예: `baikald1ws`)
 - ✅ Databricks CLI 설치 및 인증 완료
-- ✅ Python 3.8+ 설치
+- ✅ Python 3.11+ 설치
 
 ---
 
