@@ -86,11 +86,17 @@ parameters = extraction.get("parameters", {})
 # 파라미터 치환
 def replace_parameters(query: str, trigger_time: datetime) -> str:
     """쿼리 내 파라미터를 실제 값으로 치환"""
-    replacements = {
-        "${trigger_time.isoformat()}": trigger_time.isoformat(),
-        "${trigger_time - timedelta(days=1)}": (trigger_time - timedelta(days=1)).isoformat(),
-        "${current_date()}": trigger_time.date().isoformat(),
-    }
+    replacements = {}
+    
+    # 기본 시간 파라미터 (SQL Server 호환 형식)
+    # SQL Server: 'YYYY-MM-DD HH:MM:SS.mmm' 형식 선호
+    def to_sql_datetime(dt):
+        """datetime을 SQL Server 친화적 형식으로 변환"""
+        return dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]  # 밀리초까지만
+    
+    replacements["${trigger_time.isoformat()}"] = to_sql_datetime(trigger_time)
+    replacements["${trigger_time - timedelta(days=1)}"] = to_sql_datetime(trigger_time - timedelta(days=1))
+    replacements["${current_date()}"] = trigger_time.strftime('%Y-%m-%d')
     
     # Custom 파라미터 처리
     for param_name, param_config in parameters.items():
@@ -101,12 +107,14 @@ def replace_parameters(query: str, trigger_time: datetime) -> str:
                 expr = expr[2:-1]  # ${...} → ...
             # eval에 필요한 변수들을 scope에 제공
             runtime_value = eval(expr, {"trigger_time": trigger_time, "timedelta": timedelta})
-            # datetime 객체는 ISO 형식으로 변환
-            if isinstance(runtime_value, (datetime, timedelta)):
-                if hasattr(runtime_value, 'isoformat'):
-                    runtime_value = runtime_value.isoformat()
-                else:
-                    runtime_value = str(runtime_value)
+            # datetime 객체는 SQL Server 형식으로 변환
+            if isinstance(runtime_value, datetime):
+                runtime_value = to_sql_datetime(runtime_value)
+            elif isinstance(runtime_value, timedelta):
+                runtime_value = str(runtime_value)
+            elif hasattr(runtime_value, 'isoformat'):
+                # date 객체 등
+                runtime_value = runtime_value.isoformat()
         else:
             runtime_value = param_config.get("default", "")
         
@@ -125,13 +133,18 @@ main_query = extraction["main_query"]
 prepare_query = replace_parameters(prepare_query, trigger_time)
 main_query = replace_parameters(main_query, trigger_time)
 
-# SQL Server는 prepare_query와 main_query를 결합
-full_query = f"{prepare_query}\n{main_query}" if prepare_query else main_query
+# SQL Server의 경우 READ UNCOMMITTED 추가 (WITH NOLOCK과 유사한 효과)
+db_type = connection.get("db_type", "mssql").lower()
+if db_type == "mssql" and prepare_query:
+    prepare_query = f"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; {prepare_query}"
 
 print(f"\n📝 SQL Query prepared:")
 print(f"   Prepare query length: {len(prepare_query)} chars")
+if prepare_query:
+    print(f"   ✓ Prepare query will be executed via prepareQuery option")
+    print(f"   Prepare query:\n{prepare_query}")
 print(f"   Main query length: {len(main_query)} chars")
-print(f"   Full query length: {len(full_query)} chars")
+print(f"   Main query:\n{main_query}")
 
 # COMMAND ----------
 # MAGIC %md ## Execute Query & Extract Data
@@ -147,14 +160,21 @@ try:
     # JDBC 읽기
     read_options = extraction.get("read_options", {})
     
-    df = spark.read \
+    # prepareQuery: 메인 쿼리 실행 직전에 같은 연결에서 실행됨 (임시 테이블 생성 가능)
+    jdbc_reader = spark.read \
         .format("jdbc") \
         .option("url", jdbc_url) \
-        .option("query", full_query) \
         .option("user", username) \
         .option("password", password) \
         .option("driver", driver) \
-        .options(**read_options) \
+        .options(**read_options)
+    
+    # prepare_query가 있으면 prepareQuery 옵션으로 실행
+    if prepare_query:
+        jdbc_reader = jdbc_reader.option("prepareQuery", prepare_query)
+    
+    df = jdbc_reader \
+        .option("query", main_query) \
         .load()
     
     row_count = df.count()
